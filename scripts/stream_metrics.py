@@ -47,13 +47,21 @@ PROFILE_SCORERS = {
 }
 
 
-def endpoint_url(url):
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech")
+
+
+def endpoint_url(url, endpoint="/v1/chat/completions"):
+    """Join a gateway base URL (or an existing API URL) to the chosen endpoint."""
     url = url.rstrip("/")
-    if url.endswith("/v1/chat/completions"):
-        return url
+    for known_endpoint in ENDPOINTS:
+        if url.endswith(known_endpoint):
+            if known_endpoint == endpoint:
+                return url
+            url = url[:-len(known_endpoint)]
+            break
     if url.endswith("/v1"):
-        return url + "/chat/completions"
-    return url + "/v1/chat/completions"
+        return url + endpoint[len("/v1"):]
+    return url + endpoint
 
 
 def iter_sse_events(response):
@@ -112,6 +120,16 @@ def print_latency_table(rows):
 
 
 def payload_for(args, prompt, modalities):
+    if args.endpoint == "/v1/audio/speech":
+        return {
+            "model": args.model,
+            "input": prompt,
+            "voice": args.voice or "vivian",
+            "stream": True,
+            "stream_format": "sse",
+            "response_format": args.audio_format or "pcm",
+        }
+
     payload = {
         "model": args.model,
         "messages": [{"role": "user", "content": prompt}],
@@ -164,7 +182,7 @@ def run_request(index, args, prompt, modalities, run_id):
     if args.profile:
         headers["EPP-Profile"] = args.profile
     request = urllib.request.Request(
-        endpoint_url(args.url),
+        endpoint_url(args.url, args.endpoint),
         data=json.dumps(payload_for(args, prompt, modalities)).encode("utf-8"),
         headers=headers,
         method="POST",
@@ -198,6 +216,13 @@ def run_request(index, args, prompt, modalities, run_id):
                     raise RuntimeError(f"server error: {str(event['error'])[:500]}")
                 if isinstance(event.get("usage"), dict):
                     result["usage"] = event["usage"]
+                if args.endpoint == "/v1/audio/speech":
+                    event_type = event.get("type")
+                    if event_type == "speech.audio.delta" and event.get("audio"):
+                        result["audio_times"].append(event_time)
+                    elif event_type == "speech.audio.done":
+                        saw_done = True
+                    continue
                 modality = event.get("modality")
                 text_piece = ""
                 visible_piece = ""
@@ -265,7 +290,7 @@ def add_metrics(result, tokenizer, modalities):
     ]
     result["client_text_tokens"] = (
         len(tokenizer.encode(result["text"], add_special_tokens=False))
-        if result["text"] else 0
+        if result["text"] and tokenizer else 0
     )
     usage = result["usage"] or {}
     server_tokens = usage.get("completion_tokens")
@@ -316,12 +341,12 @@ def discover_pods(namespace, gateway_name):
     return ip_to_pod, gateway_pods
 
 
-def gateway_records(log_text, run_id):
+def gateway_records(log_text, run_id, request_path):
     """Read Istio's default access log: user agent, request ID, host, upstream."""
     records = {}
     prefix = f"voli-stream-metrics/{run_id}/"
     for line in log_text.splitlines():
-        if prefix not in line or "POST /v1/chat/completions" not in line:
+        if prefix not in line or f"POST {request_path}" not in line:
             continue
         try:
             fields = shlex.split(line)
@@ -370,7 +395,7 @@ def resolve_backends(args, results, run_id, since_time, ip_to_pod, gateway_pods)
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
                 print(f"Backend lookup: {error}", file=sys.stderr)
                 return
-            for index, entries in gateway_records(output, run_id).items():
+            for index, entries in gateway_records(output, run_id, args.endpoint).items():
                 records.setdefault(index, set()).update(entries)
         if all(result["iteration"] in records for result in results):
             break
@@ -593,7 +618,7 @@ def print_run_report(run, args, modalities):
     print("\nStreaming results")
     print("=================")
     print(f"  Model:        {args.model}")
-    print(f"  Endpoint:     {endpoint_url(args.url)}")
+    print(f"  Endpoint:     {endpoint_url(args.url, args.endpoint)}")
     print(f"  EPP profile:  {run['profile']}")
     print(f"  Scorer:       {run['scorer']}")
     print(f"  Output:       {', '.join(modalities)}")
@@ -602,15 +627,22 @@ def print_run_report(run, args, modalities):
     print(f"  Duration:     {run['duration_seconds']:.2f} s  ({iterations / run['duration_seconds']:.2f} requests/s)")
 
     print_section("Latency (valid responses)")
-    print_latency_table([
-        ("TTFT (first text/reasoning)", samples["ttft_ms"], "ms"),
-        ("TTFO (first visible text)", samples["ttfo_ms"], "ms"),
-        ("TTFA (first audio data)", samples["ttfa_ms"], "ms"),
-        ("Text TPOT estimate", samples["tpot_estimate_ms"], "ms/token"),
-        ("Text chunk gap (ITL proxy)", samples["text_gap_ms"], "ms"),
-        ("Audio chunk gap", samples["audio_gap_ms"], "ms"),
-        ("End-to-end", samples["e2e_ms"], "ms"),
-    ])
+    if args.endpoint == "/v1/audio/speech":
+        print_latency_table([
+            ("TTFA (first audio event)", samples["ttfa_ms"], "ms"),
+            ("Audio chunk gap", samples["audio_gap_ms"], "ms"),
+            ("End-to-end", samples["e2e_ms"], "ms"),
+        ])
+    else:
+        print_latency_table([
+            ("TTFT (first text/reasoning)", samples["ttft_ms"], "ms"),
+            ("TTFO (first visible text)", samples["ttfo_ms"], "ms"),
+            ("TTFA (first audio data)", samples["ttfa_ms"], "ms"),
+            ("Text TPOT estimate", samples["tpot_estimate_ms"], "ms/token"),
+            ("Text chunk gap (ITL proxy)", samples["text_gap_ms"], "ms"),
+            ("Audio chunk gap", samples["audio_gap_ms"], "ms"),
+            ("End-to-end", samples["e2e_ms"], "ms"),
+        ])
 
     print_section("Routing (all requests)")
     print(f"  {'Pod':<59} {'Count':>6} {'Share':>7}")
@@ -625,16 +657,26 @@ def print_run_report(run, args, modalities):
             if not pod_results:
                 continue
             print(f"  {pod}")
-            print_latency_table([
-                ("TTFT", [r["ttft_ms"] for r in pod_results if r["ttft_ms"] is not None], "ms"),
-                ("End-to-end", [r["e2e_ms"] for r in pod_results], "ms"),
-            ])
+            if args.endpoint == "/v1/audio/speech":
+                print_latency_table([
+                    ("TTFA", [r["ttfa_ms"] for r in pod_results if r["ttfa_ms"] is not None], "ms"),
+                    ("End-to-end", [r["e2e_ms"] for r in pod_results], "ms"),
+                ])
+            else:
+                print_latency_table([
+                    ("TTFT", [r["ttft_ms"] for r in pod_results if r["ttft_ms"] is not None], "ms"),
+                    ("End-to-end", [r["e2e_ms"] for r in pod_results], "ms"),
+                ])
             print()
 
     print_issues(run)
     print_section("Notes")
-    print("  TTFT, TTFO and TTFA are client-observed. Text chunk gaps approximate ITL.")
-    print("  Text TPOT is an estimate because streamed chunks may contain multiple tokens.")
+    if args.endpoint == "/v1/audio/speech":
+        print("  TTFA and audio chunk gaps are client-observed from streamed SSE events.")
+        print("  Audio chunk gaps are a streaming proxy, not token-level ITL.")
+    else:
+        print("  TTFT, TTFO and TTFA are client-observed. Text chunk gaps approximate ITL.")
+        print("  Text TPOT is an estimate because streamed chunks may contain multiple tokens.")
     if len(valid) < 100:
         print("  P99 with fewer than 100 valid requests is a rough tail indicator.")
     if args.debug:
@@ -666,7 +708,7 @@ def print_suite_report(runs, args, modalities):
     print("\nProfile suite results")
     print("=====================")
     print(f"  Model:     {args.model}")
-    print(f"  Endpoint:  {endpoint_url(args.url)}")
+    print(f"  Endpoint:  {endpoint_url(args.url, args.endpoint)}")
     print(f"  Output:    {', '.join(modalities)}")
     print(f"  Runs:      {len(runs)} across {len(set(r['profile'] for r in runs))} profiles")
     for number, run in enumerate(runs, 1):
@@ -676,22 +718,35 @@ def print_suite_report(runs, args, modalities):
             f"valid {run['valid_responses']}/{run['iterations']}  |  "
             f"failed {run['failed_responses']}  |  {run['duration_seconds']:.1f} s"
         )
-        print(
-            f"     TTFT p50/p99 {suite_value(run, 'ttft_ms', 'p50')}/{suite_value(run, 'ttft_ms', 'p99')} ms  |  "
-            f"TTFA p50/p99 {suite_value(run, 'ttfa_ms', 'p50')}/{suite_value(run, 'ttfa_ms', 'p99')} ms"
-        )
-        print(
-            f"     TPOT~ mean {suite_value(run, 'tpot_estimate_ms', 'mean')} ms/token  |  "
-            f"text gap p50/p99 {suite_value(run, 'text_gap_ms', 'p50')}/{suite_value(run, 'text_gap_ms', 'p99')} ms  |  "
-            f"E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms"
-        )
+        if args.endpoint == "/v1/audio/speech":
+            print(
+                f"     TTFA p50/p99 {suite_value(run, 'ttfa_ms', 'p50')}/{suite_value(run, 'ttfa_ms', 'p99')} ms  |  "
+                f"audio gap p50/p99 {suite_value(run, 'audio_gap_ms', 'p50')}/{suite_value(run, 'audio_gap_ms', 'p99')} ms"
+            )
+            print(
+                f"     E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms"
+            )
+        else:
+            print(
+                f"     TTFT p50/p99 {suite_value(run, 'ttft_ms', 'p50')}/{suite_value(run, 'ttft_ms', 'p99')} ms  |  "
+                f"TTFA p50/p99 {suite_value(run, 'ttfa_ms', 'p50')}/{suite_value(run, 'ttfa_ms', 'p99')} ms"
+            )
+            print(
+                f"     TPOT~ mean {suite_value(run, 'tpot_estimate_ms', 'mean')} ms/token  |  "
+                f"text gap p50/p99 {suite_value(run, 'text_gap_ms', 'p50')}/{suite_value(run, 'text_gap_ms', 'p99')} ms  |  "
+                f"E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms"
+            )
         route = ", ".join(f"{pod}: {count}" for pod, count in sorted(run["routing"].items()))
         print(f"     Pods: {route}")
         if run["_failures"] or run["_missing"]:
             print(f"     Issues: use --debug or --output-json for request details")
     print_section("Notes")
     print("  Profiles run sequentially; requests within each run use the stated concurrency.")
-    print("  TTFT and TTFA are client-observed; text gaps approximate ITL; TPOT is an estimate.")
+    if args.endpoint == "/v1/audio/speech":
+        print("  TTFA and audio chunk gaps are client-observed from streamed SSE events.")
+        print("  Audio chunk gaps are a streaming proxy, not token-level ITL.")
+    else:
+        print("  TTFT and TTFA are client-observed; text gaps approximate ITL; TPOT is an estimate.")
     print("  P99 from fewer than 100 valid requests is a rough tail indicator.")
     if args.debug:
         for run in runs:
@@ -706,10 +761,16 @@ def serializable_run(run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://10.6.62.51:31670")
+    parser.add_argument(
+        "--endpoint",
+        choices=ENDPOINTS,
+        default="/v1/chat/completions",
+        help="OpenAI-compatible API endpoint (default: /v1/chat/completions).",
+    )
     parser.add_argument("--model", default="qwen3-omni")
     parser.add_argument("--prompt", default="Say hello and introduce yourself in one sentence.")
     parser.add_argument("--prompts-file", type=Path, help="One prompt per nonempty line; cycles through them.")
-    parser.add_argument("--modalities", default="text,audio", help="text, audio, or text,audio")
+    parser.add_argument("--modalities", default="text,audio", help="Chat-completions output: text, audio, or text,audio.")
     parser.add_argument("--voice", help="Optional audio voice passed to the API.")
     parser.add_argument("--audio-format", help="Optional audio format passed to the API.")
     parser.add_argument("--no-usage", action="store_true", help="Omit stream_options.include_usage.")
@@ -738,18 +799,21 @@ def main():
         for profile, scorer in PROFILE_SCORERS.items():
             print(f"  {profile:<31} {scorer}")
         return
-    if not args.tokenizer:
-        parser.error("--tokenizer is required for benchmark runs")
+    if args.endpoint == "/v1/chat/completions" and not args.tokenizer:
+        parser.error("--tokenizer is required for chat-completions runs")
     if args.iterations < 1 or args.concurrency < 1 or args.timeout <= 0 or args.gateway_wait < 0:
         parser.error("iterations and concurrency must be positive; timeout must be positive; gateway-wait cannot be negative")
     if args.profile is not None and (not args.profile.strip() or "\r" in args.profile or "\n" in args.profile):
         parser.error("--profile must be a nonempty profile name without line breaks")
     plan, suite_mode = suite_plan(args, parser)
-    modalities = [part.strip() for part in args.modalities.split(",")]
-    if not modalities or len(set(modalities)) != len(modalities) or any(
-        part not in {"text", "audio"} for part in modalities
-    ):
-        parser.error("--modalities must be text, audio, or text,audio")
+    if args.endpoint == "/v1/audio/speech":
+        modalities = ["audio"]
+    else:
+        modalities = [part.strip() for part in args.modalities.split(",")]
+        if not modalities or len(set(modalities)) != len(modalities) or any(
+            part not in {"text", "audio"} for part in modalities
+        ):
+            parser.error("--modalities must be text, audio, or text,audio")
     prompts = [args.prompt]
     if args.prompts_file:
         try:
@@ -759,11 +823,13 @@ def main():
         if not prompts:
             parser.error("--prompts-file has no nonempty lines")
 
-    try:
-        from transformers import AutoTokenizer
-    except ImportError as error:
-        raise SystemExit("Install transformers in the venv first.") from error
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
+    tokenizer = None
+    if args.endpoint == "/v1/chat/completions":
+        try:
+            from transformers import AutoTokenizer
+        except ImportError as error:
+            raise SystemExit("Install transformers in the venv first.") from error
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
 
     runs = []
     for profile, scorer, settings in plan:
@@ -778,7 +844,7 @@ def main():
         if suite_mode:
             payload = {
                 "model": args.model,
-                "endpoint": endpoint_url(args.url),
+                "endpoint": endpoint_url(args.url, args.endpoint),
                 "modalities": modalities,
                 "runs": [serializable_run(run) for run in runs],
             }
