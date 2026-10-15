@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    meta.helm.sh/release-name: endpoint-picker
+    meta.helm.sh/release-namespace: vllm-omni-validation
+  creationTimestamp: "2026-10-13T12:21:32Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: endpoint-picker-epp
+    app.kubernetes.io/version: 0.0.0
+    llm-d.ai/igw-mode: llm-d-router-gateway
+  name: endpoint-picker-epp
+  namespace: vllm-omni-validation
+  resourceVersion: "109251963"
+  uid: 4637b2f6-a59e-4bfb-8936-3610448047b4
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      llm-d-router-gateway: endpoint-picker-epp
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: 0b8606a6408f7f5c4f4334d4980b0448073e49b336b6c6b4c7e26c8468250ff7
+      labels:
+        llm-d-router-gateway: endpoint-picker-epp
+        llm-d.ai/igw-mode: llm-d-router-gateway
+    spec:
+      containers:
+      - args:
+        - --pool-name
+        - endpoint-picker
+        - --pool-namespace
+        - vllm-omni-validation
+        - --pool-group
+        - inference.networking.k8s.io
+        - --zap-encoder
+        - json
+        - --config-file
+        - /config/tts.yaml
+        - --grpc-health-port
+        - "9003"
+        - --allow-experimental-plugins=true
+        - --secure-serving=false
+        - --tracing=false
+        env:
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        image: quay.io/rh_et_wd/llm-d-router-endpoint-picker:new-approach
+        imagePullPolicy: Always
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 5
+        livenessProbe:
+          failureThreshold: 3
+          grpc:
+            port: 9003
+            service: liveness
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: epp
+        ports:
+        - containerPort: 9002
+          name: grpc
+          protocol: TCP
+        - containerPort: 9003
+          name: grpc-health
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          grpc:
+            port: 9003
+            service: readiness
+          periodSeconds: 2
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: "2"
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /config
+          name: plugins-config-volume
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: endpoint-picker-epp
+      serviceAccountName: endpoint-picker-epp
+      terminationGracePeriodSeconds: 130
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: endpoint-picker-epp
+        name: plugins-config-volume
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-10-13T12:21:36Z"
+    lastUpdateTime: "2026-10-13T12:21:36Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2026-10-13T12:21:32Z"
+    lastUpdateTime: "2026-10-13T12:21:36Z"
+    message: ReplicaSet "endpoint-picker-epp-844d874b54" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  terminatingReplicas: 0
+  updatedReplicas: 1

@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: preload-qwen3-omni
+  namespace: 
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 14400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        fsGroup: 1001080000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: download
+          image: docker.io/library/python:3.11-slim-bookworm
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              python -m venv /tmp/download-venv
+              /tmp/download-venv/bin/pip install --no-cache-dir "huggingface_hub==0.36.0"
+              /tmp/download-venv/bin/python -u - <<'PY'
+              import json
+              import os
+              from pathlib import Path
+              from datetime import datetime, timezone
+              from huggingface_hub import HfApi, snapshot_download
+
+              repo = os.environ["MODEL_ID"]
+              requested = os.environ["MODEL_REVISION"]
+              root = Path("/models")
+              destination = root / "Qwen3-Omni-30B-A3B-Instruct"
+              revision_file = root / "qwen3-omni-revision.txt"
+              complete_file = root / "qwen3-omni-download-complete.json"
+
+              if revision_file.exists():
+                  revision = revision_file.read_text().strip()
+                  if requested != "main" and revision != requested:
+                      raise RuntimeError("Existing cache revision differs; use a separate cache for a new revision")
+              else:
+                  revision = HfApi().model_info(repo, revision=requested).sha
+                  revision_file.write_text(revision + "\n")
+
+              complete_file.unlink(missing_ok=True)
+              print(f"Model: {repo}", flush=True)
+              print(f"Pinned revision: {revision}", flush=True)
+              print(f"Destination: {destination}", flush=True)
+              snapshot_download(repo_id=repo, revision=revision,
+                                local_dir=str(destination), max_workers=2)
+              if not (destination / "config.json").is_file():
+                  raise RuntimeError("Missing :q!config.json")
+              if not any(destination.rglob("*.safetensors")):
+                  raise RuntimeError("No safetensors weights found")
+              record = {
+                  "model_id": repo,
+                  "revision": revision,
+                  "path": str(destination),
+                  "completed_at": datetime.now(timezone.utc).isoformat(),
+              }
+              complete_file.write_text(json.dumps(record, indent=2) + "\n")
+              os.sync()
+              print(json.dumps(record, indent=2), flush=True)
+              print("MODEL DOWNLOAD COMPLETE", flush=True)
+              PY
+          env:
+            - name: MODEL_ID
+              value: "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+            - name: MODEL_REVISION
+              value: "26291f793822fb6be9555850f06dfe95f2d7e695"
+            - name: HOME
+              value: /tmp
+            - name: HF_HOME
+              value: /models/.huggingface
+            - name: HF_HUB_DISABLE_XET
+              value: "1"
+            - name: HF_HUB_DOWNLOAD_TIMEOUT
+              value: "120"
+            - name: HF_HUB_DISABLE_TELEMETRY
+              value: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+              ephemeral-storage: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+              ephemeral-storage: 4Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: 

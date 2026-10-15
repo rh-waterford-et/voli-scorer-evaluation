@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "2"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"labels":{"app":"vllm-tts-sim"},"name":"vllm-tts-sim","namespace":"vllm-omni-validation"},"spec":{"replicas":2,"selector":{"matchLabels":{"app":"multimodal-inference-pool","llm-d.ai/model-arch":"autoregressive-tts"}},"template":{"metadata":{"labels":{"app":"multimodal-inference-pool","llm-d.ai/engine-type":"vllm","llm-d.ai/model-arch":"autoregressive-tts"}},"spec":{"containers":[{"args":["--model","qwen3-omni","--port","8000","--mode","echo","--log-http"],"env":[{"name":"POD_NAME","valueFrom":{"fieldRef":{"fieldPath":"metadata.name"}}},{"name":"NAMESPACE","valueFrom":{"fieldRef":{"fieldPath":"metadata.namespace"}}}],"image":"ghcr.io/llm-d/llm-d-inference-sim:v0.10.2","imagePullPolicy":"IfNotPresent","name":"vllm-sim","ports":[{"containerPort":8000,"name":"http","protocol":"TCP"}],"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"50m","memory":"256Mi"}}}]}}}}
+  creationTimestamp: "2026-10-13T15:16:37Z"
+  generation: 2
+  labels:
+    app: vllm-tts-sim
+  name: vllm-tts-sim
+  namespace: vllm-omni-validation
+  resourceVersion: "109433434"
+  uid: afa0b3e7-3c75-4efb-b51f-aa9bdf732c13
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: multimodal-inference-pool
+      llm-d.ai/model-arch: autoregressive-tts
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: multimodal-inference-pool
+        llm-d.ai/engine-type: vllm
+        llm-d.ai/model-arch: autoregressive-tts
+    spec:
+      containers:
+      - args:
+        - --model
+        - qwen3-omni
+        - --port
+        - "8000"
+        - --mode
+        - echo
+        - --log-http
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        image: ghcr.io/llm-d/llm-d-inference-sim:v0.10.2
+        imagePullPolicy: IfNotPresent
+        name: vllm-sim
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 50m
+            memory: 256Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status:
+  availableReplicas: 2
+  conditions:
+  - lastTransitionTime: "2026-10-13T15:16:41Z"
+    lastUpdateTime: "2026-10-13T15:16:41Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2026-10-13T15:16:38Z"
+    lastUpdateTime: "2026-10-13T15:32:45Z"
+    message: ReplicaSet "vllm-tts-sim-568648978b" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 2
+  readyReplicas: 2
+  replicas: 2
+  terminatingReplicas: 0
+  updatedReplicas: 2
