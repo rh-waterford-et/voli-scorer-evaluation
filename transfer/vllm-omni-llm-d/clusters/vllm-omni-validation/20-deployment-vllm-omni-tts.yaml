@@ -1,0 +1,135 @@
+# Based on ../../40-model-server/deployment-vllm-omni-tts-node-32.yaml,
+# retargeted for this cluster's actual topology (1 GPU node, 1 PVC -- no
+# per-node suffix needed, unlike WetLab's 3-node pattern):
+#   - nodeSelector: l42-h06-000-xe8640.rdu3.labs.perfscale.redhat.com
+#     (the only GPU node on this cluster -- 4x H100 80GB, confirmed via
+#     `oc get nodes`, no taint so no toleration needed)
+#   - claimName: qwen3-omni-model-cache (confirmed Bound, 200Gi, RWO,
+#     StorageClass longhorn-h100-cache, disk-selector-pinned to this exact
+#     node via Longhorn -- see ../README.md)
+#   - labels: dropped WetLab's `wetlab.redhat.com/baseline-model: bm-003`
+#     (that's WetLab's own Approved Model Catalogue convention, doesn't
+#     apply here and bm-003 isn't even the right model for this cluster) --
+#     using `llm-d.ai/baseline-model: qwen3-omni` instead, matching the
+#     llm-d.ai/* domain already used by the engine-type/model-arch labels
+#     below, with a value matching this cluster's actual cache PVC name.
+#   - NO subPath: unlike WetLab's `approved/bm-003/<revision>` preload
+#     convention, no such structure has been established on this PVC yet --
+#     mounting the whole PVC at its root. If/when a revision-pinned subPath
+#     convention is agreed for this cluster, add it back here.
+#
+# --model points one directory deeper than the mountPath (deliberately --
+# do NOT also change mountPath to match, see below). The PVC root itself
+# has no config.json -- confirmed via a live crash on 2026-10-13
+# ("Could not determine model_type for model: /models/qwen3-omni ...").
+# At that point the cache was NOT empty (Longhorn reported ~70GB actually
+# written), so the model is nested under a subdirectory named after the
+# actual repo, Qwen3-Omni-30B-A3B-Instruct/, rather than sitting flat at
+# the mount root. Since mountPath has no subPath (mounts the whole PVC),
+# that subdirectory is already visible inside the container at
+# /models/qwen3-omni/Qwen3-Omni-30B-A3B-Instruct/ without any manifest
+# change beyond the --model arg below -- changing mountPath to the same
+# deep path too would double the nesting and break it again.
+#
+# Also dropped --task-type CustomVoice: that flag is specific to WetLab's
+# BM-003 (Qwen3-TTS-12Hz-1.7B-CustomVoice), a dedicated TTS/voice-cloning
+# architecture. Qwen3-Omni-30B-A3B-Instruct is a general-purpose multimodal
+# instruct model, not a CustomVoice variant -- it doesn't implement that
+# task head, so the flag would likely cause a second, different failure
+# right after the path issue above is fixed.
+#
+# 2026-10-13, second crash round: after the path/task-type fix above, the
+# pod ran but crash-looped with NVMLError_InvalidArgument from
+# vllm/platforms/cuda.py get_device_capability() -> pynvml.nvmlDeviceGetHandleByIndex()
+# -- an NVML GPU-index error during early capability detection, NOT an OOM
+# (exit code 1/"Error", not 137) and NOT resource contention (node was at
+# 14% CPU / 1% memory / 1-of-4 GPU allocated when it crashed -- confirmed
+# via `oc describe node`). --max-model-len was also removed per request,
+# though it's unrelated to this error (that flag only affects KV-cache
+# sizing, consulted later than where this crash happens). Bumped resources
+# to request 2 GPUs / more CPU+memory anyway per explicit decision, even
+# though the root cause looks like an NVML device-index/visibility issue
+# (GPU Operator stack on the node was confirmed healthy: device plugin,
+# driver, DCGM, MIG all-disabled/success, no sharing) rather than a
+# quantity-of-resources problem -- revisit if this doesn't resolve it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-omni-tts
+  namespace: vllm-omni-validation
+  labels:
+    llm-d.ai/baseline-model: qwen3-omni
+spec:
+  replicas: 0 # <-- set to 1 only after the cache PVC is actually populated
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      llm-d.ai/baseline-model: qwen3-omni
+  template:
+    metadata:
+      labels:
+        llm-d.ai/baseline-model: qwen3-omni
+        # InferencePool membership labels -- must match
+        # router.modelServers.matchLabels in ./values-vllm-omni-validation.yaml
+        app: multimodal-inference-pool
+        llm-d.ai/engine-type: vllm-omni
+        llm-d.ai/model-arch: autoregressive-tts
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: l42-h06-000-xe8640.rdu3.labs.perfscale.redhat.com
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: vllm-omni
+          image: vllm/vllm-omni:v0.24.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: USER
+              value: vllm
+            - name: LOGNAME
+              value: vllm
+            - name: HOME
+              value: /tmp
+            - name: TORCHINDUCTOR_CACHE_DIR
+              value: /tmp/torchinductor
+          command:
+            - vllm
+          args:
+            - serve
+            - --omni
+            - --model
+            - /models/qwen3-omni/Qwen3-Omni-30B-A3B-Instruct
+            - --served-model-name
+            - qwen3-omni
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: "2"
+            limits:
+              cpu: "16"
+              memory: 128Gi
+              nvidia.com/gpu: "2"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models/qwen3-omni
+              readOnly: true
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: qwen3-omni-model-cache

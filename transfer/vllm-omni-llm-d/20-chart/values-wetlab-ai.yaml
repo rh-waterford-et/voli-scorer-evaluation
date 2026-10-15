@@ -1,0 +1,122 @@
+# Reproduces the live WetLab `endpoint-picker` Helm release (chart
+# llm-d-router-gateway) as it is ACTUALLY running today.
+#
+# IMPORTANT: this is not simply `helm get values` on the WetLab release.
+# Several resources on WetLab were hand-patched (kubectl edit/patch) after the
+# original `helm install`, so the live state has drifted from what
+# `helm get values` alone would render. The values below have been corrected
+# so that a fresh `helm install` with this file reproduces the live state
+# directly, with no manual post-install patches required -- except the
+# HTTPRoute, which the chart cannot express the live path-matching rules for.
+# See ../30-overrides/httproute-tts.yaml for that one.
+#
+# Drift that was found and folded into these values:
+#   - router.modelServers.matchLabels: live InferencePool selector is
+#     `app: multimodal-inference-pool`, not `wetlab.redhat.com/epp-pool: baseline`
+#     (originally in the chart values; selector was hand-patched on 2026-10-08).
+#   - router.epp.pluginsConfigFile / pluginsCustomConfig: live EPP ConfigMap
+#     and --config-file arg use a `tts.yaml` profile (active-request-scorer +
+#     max-score-picker) that was hand-added to the ConfigMap after install,
+#     not the chart-default `multimodal-plugins.yaml`.
+
+httpRoute:
+  create: false # the live HTTPRoute's path-matching rules aren't expressible via chart values -- applied standalone, see ../30-overrides/httproute-tts.yaml
+
+provider:
+  name: none
+
+router:
+  clusterDomain: cluster.local
+
+  modelServers:
+    protocol: http
+    targetPorts:
+      - number: 8000
+    matchLabels:
+      app: multimodal-inference-pool # <-- must match the labels on your vllm-omni pods, see ../40-model-server/
+
+  inferencePool:
+    create: true
+    failureMode: FailOpen
+
+  epp:
+    replicas: 1
+    extProcPort: 9002
+    flags:
+      allow-experimental-plugins: true
+      secure-serving: false
+    image:
+      registry: quay.io/rh_et_wd
+      repository: llm-d-router-endpoint-picker
+      # NOT "latest" -- the live WetLab Deployment was hand-patched
+      # (kubectl-edit/kubectl-replace, confirmed via managedFields) to run
+      # ":new-approach", not whatever the chart's default values.yaml says.
+      # ":latest" may not even understand the tts.yaml EndpointPickerConfig
+      # format in use below (apiVersion: inference.networking.x-k8s.io/v1alpha1,
+      # not llm-d.ai/v1alpha1) -- untested, don't assume compatibility.
+      # Re-check `oc get deployment endpoint-picker-epp -o jsonpath='{.spec.template.spec.containers[0].image}'`
+      # against WetLab before changing this.
+      tag: new-approach
+      pullPolicy: Always
+    metricsDataSource:
+      scheme: http
+      path: /metrics
+      insecureSkipVerify: true
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    # Live EPP is wired to a TTS-specific scheduling profile rather than the
+    # chart's default or even the multimodal profile. Kept both below so you
+    # can switch back via pluginsConfigFile if useful.
+    pluginsConfigFile: tts.yaml
+    pluginsCustomConfig:
+      multimodal-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        - type: queue-scorer
+        - type: modality-filter
+        - type: max-score-picker
+        - type: single-profile-handler
+        schedulingProfiles:
+        - name: default
+          plugins:
+          - pluginRef: modality-filter
+          - pluginRef: max-score-picker
+          - pluginRef: queue-scorer
+            weight: 1
+      tts.yaml: |
+        apiVersion: inference.networking.x-k8s.io/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        - name: activeRequest
+          type: active-request-scorer
+        - name: maxScore
+          type: max-score-picker
+        schedulingProfiles:
+        - name: default
+          plugins:
+          - pluginRef: activeRequest
+          - pluginRef: maxScore
+        dataLayer:
+          injectDefaults: false
+
+  monitoring:
+    prometheus:
+      enabled: false
+
+  proxy:
+    enabled: false
+
+  tokenizer:
+    enabled: false
+
+  tracing:
+    enabled: false
+
+  latencyPredictor:
+    enabled: false

@@ -1,0 +1,19 @@
+# Live-exported from the WetLab cluster (`oc get gateway inference-gateway -n wetlab-ai`).
+#
+# This is NOT managed by the Helm chart below — it's applied standalone.
+# `gatewayClassName` must match a GatewayClass that actually exists on the
+# target cluster (see ../00-prereqs/README.md, item 3).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: inference-gateway
+  namespace: wetlab-ai # <-- change if targeting a different namespace
+spec:
+  gatewayClassName: data-science-gateway-class # <-- change if the new cluster uses a different GatewayClass
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same

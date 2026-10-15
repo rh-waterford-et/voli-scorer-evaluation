@@ -1,0 +1,39 @@
+# Live-exported from the WetLab cluster (`oc get httproute endpoint-picker -n wetlab-ai`).
+#
+# The llm-d-router-gateway chart's HTTPRoute template only supports a single
+# PathPrefix "/" rule (optionally with header matches) -- it can't express the
+# exact-path, multi-match rule actually running on WetLab. So this is shipped
+# as a standalone manifest instead (values-wetlab-ai.yaml sets
+# httpRoute.create: false to avoid the chart fighting over the same object).
+#
+# Apply this AFTER the Helm install (it needs the InferencePool named
+# "endpoint-picker" to already exist as a valid backendRef).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: endpoint-picker
+  namespace: wetlab-ai
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: inference-gateway
+    sectionName: http
+  rules:
+  - backendRefs:
+    - group: inference.networking.k8s.io
+      kind: InferencePool
+      name: endpoint-picker
+      weight: 1
+    matches:
+    - path:
+        type: Exact
+        value: /v1/chat/completions
+    - path:
+        type: Exact
+        value: /v1/audio/speech
+    - path:
+        type: Exact
+        value: /v1/audio/transcriptions
+    timeouts:
+      request: 600s

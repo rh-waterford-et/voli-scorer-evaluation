@@ -1,0 +1,19 @@
+# Based on ../../10-namespace/gateway.yaml, retargeted for this cluster:
+#   - namespace: vllm-omni-validation (confirmed via oc project, 2026-10-13)
+#   - gatewayClassName: data-science-gateway-class (confirmed Accepted:true,
+#     RHOAI-operator-managed default on this cluster -- see README.md in
+#     this directory for why, over the other option openshift-ai-inference)
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: inference-gateway
+  namespace: vllm-omni-validation
+spec:
+  gatewayClassName: data-science-gateway-class
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same

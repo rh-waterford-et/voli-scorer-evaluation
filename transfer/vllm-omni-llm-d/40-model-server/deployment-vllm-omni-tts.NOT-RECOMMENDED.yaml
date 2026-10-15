@@ -1,0 +1,133 @@
+# ============================================================================
+# NOT RECOMMENDED -- violates wetlab-operations guardrails. Kept for
+# reference only; do not apply this on the new cluster.
+#
+# This is a faithful, live-exported copy of the `vllm-tts-omni` Deployment
+# exactly as it runs on WetLab today (`oc get deployment vllm-tts-omni -n
+# wetlab-ai`). It downloads Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice directly
+# from Hugging Face at pod startup, using an unpinned (floating) revision.
+#
+# That violates several explicit rules in this repo's own guardrails:
+#   - docs/guardrails/model-onboarding-policy.md:309
+#       "models must not be downloaded ad hoc by ordinary workload deployments"
+#   - docs/guardrails/model-onboarding-policy.md:315
+#       "inference workloads must not require general Internet egress to
+#        start successfully"
+#   - docs/guardrails/model-onboarding-policy.md:356
+#       "deployments must not trigger automatic model downloads"
+#   - docs/guardrails/approved-models.md:185
+#       "Runtime validation must use the approved node-local cached model
+#        artefact rather than downloading the model during application
+#        startup"
+#
+# The model it downloads is already BM-003 in the Approved Model Catalogue,
+# pinned at revision 0c0e3051f131929182e2c023b9537f8b1c68adfe and already
+# cached on every GPU node -- it should be mounting that, not re-downloading
+# an unpinned copy. Use deployment-vllm-omni-tts-node-*.yaml instead, which
+# mounts the approved cache the same way bm-003-vllm-omni does.
+#
+# This file is kept only so you have an exact record of what WetLab is
+# currently running, in case you need to flag it for remediation there too.
+# ============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-tts-omni
+  namespace: wetlab-ai
+spec:
+  replicas: 0 # <-- set to 1 (or more) once you're ready to actually serve traffic
+  selector:
+    matchLabels:
+      app: multimodal-inference-pool
+      llm-d.ai/engine-type: vllm-omni
+      llm-d.ai/model-arch: autoregressive-tts
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: multimodal-inference-pool
+        llm-d.ai/engine-type: vllm-omni
+        llm-d.ai/model-arch: autoregressive-tts
+    spec:
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: modelserver
+        image: docker.io/vllm/vllm-omni:v0.26.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - vllm
+        - serve
+        args:
+        - Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+        - --omni
+        - --trust-remote-code
+        - --port=8000
+        - --disable-access-log-for-endpoints=/health,/metrics,/v1/models
+        - --log-stats
+        env:
+        - name: USER
+          value: llm-d
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: llm-d-hf-token
+              key: HF_TOKEN
+              optional: true
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "4"
+            memory: 10Gi
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "6"
+            memory: 16Gi
+            nvidia.com/gpu: "1"
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          failureThreshold: 60
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 15
+          failureThreshold: 3
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+      volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 4Gi

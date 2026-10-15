@@ -1,0 +1,6 @@
+dependencies:
+- name: router
+  repository: file://../chart-routerlib
+  version: 0.0.0
+digest: sha256:255df6d606625614ca4bdcf96593937e3965a39705783ca21f2b9122ada74370
+generated: "2026-10-13T11:50:19.259548+01:00"

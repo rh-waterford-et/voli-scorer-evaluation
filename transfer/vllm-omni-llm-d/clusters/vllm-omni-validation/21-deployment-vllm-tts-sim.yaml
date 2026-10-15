@@ -1,0 +1,107 @@
+# Based on ../../40-model-server/deployment-vllm-tts-sim.yaml, retargeted for
+# this cluster and bumped from replicas: 0 to replicas: 2.
+#
+# Why this exists: ./20-deployment-vllm-omni-tts.yaml (the real GPU backend)
+# is capped at exactly 1 replica -- its cache PVC (qwen3-omni-model-cache) is
+# RWO on a single-replica Longhorn volume, so only one pod can mount it at a
+# time (see ../README.md). That's fine for serving, but it means the real
+# backend alone can never give the EPP more than one candidate endpoint --
+# scorers like queue-scorer/active-request-scorer/kv-cache-utilization-scorer
+# have nothing to *choose between* with a pool of one. We're also GPU-starved
+# on this cluster right now (single H100 node, PVC-gated to 1 pod), so a
+# second real replica isn't an option today either.
+#
+# These two CPU-only `llm-d-inference-sim` pods solve that: no GPU, no PVC,
+# schedule anywhere with spare CPU (confirmed via `oc get nodes -o
+# jsonpath='{.items[*].spec.taints}'` -- the one GPU node has no taints, and
+# is at ~127 allocatable CPU / ~1TB RAM, barely touched). They carry the same
+# InferencePool-membership labels as the real deployment
+# (app: multimodal-inference-pool, llm-d.ai/engine-type, llm-d.ai/model-arch)
+# so the EPP treats them as ordinary pool members -- this is exactly the
+# `vllm-tts-sim` pattern already proven and documented at the repo root in
+# TTS_LOAD_BALANCING_DEMO.md / MULTIMODAL_SETUP_COMPLETE.md (run previously
+# against a different cluster/namespace; this file reproduces that setup
+# here, targeting vllm-omni-validation).
+#
+# By design, ./20-deployment-vllm-omni-tts.yaml (the real backend) is left
+# untouched at replicas: 1 -- this Deployment is additive, not a replacement.
+# Total pool membership after applying this file: 1 real qwen3-omni pod + 2
+# sim pods = 3 candidates for the EPP to choose between.
+#
+# Test via the AUDIO paths, not /v1/chat/completions: these are multimodal
+# pool members (app: multimodal-inference-pool, same labels as the real
+# qwen3-omni backend) meant to stand in for the audio-capable backend, and
+# ./10-httproute-tts.yaml already routes /v1/audio/speech and
+# /v1/audio/transcriptions (plus /v1/chat/completions) to this same
+# InferencePool/EPP. The sim image 404s on the audio paths (it only
+# implements /v1/chat/completions internally), but that's fine -- the EPP's
+# routing decision (which pod gets picked) happens before that, driven by
+# the live --config-file /config/tts.yaml (active-request-scorer +
+# max-score-picker), so the 404 body doesn't invalidate the test. Check the
+# `x-inference-pod` response header, not the body/status code, to see which
+# of the two pods tts.yaml's scorers picked for each audio request.
+#
+# See ../README.md "Swapping EPP scorers" for how to flip
+# router.epp.pluginsConfigFile between the profiles already baked into the
+# endpoint-picker-epp ConfigMap (tts.yaml, multimodal-plugins.yaml,
+# default-plugins.yaml, payload-agnostic.yaml) and watch these 2 pods get
+# scored differently under each one.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-tts-sim
+  namespace: vllm-omni-validation
+  labels:
+    app: vllm-tts-sim
+spec:
+  replicas: 2 # <-- the "2 sim pods" requested; bump further if you want more candidates
+  selector:
+    matchLabels:
+      app: multimodal-inference-pool
+      llm-d.ai/model-arch: autoregressive-tts
+  template:
+    metadata:
+      labels:
+        app: multimodal-inference-pool
+        llm-d.ai/engine-type: vllm
+        llm-d.ai/model-arch: autoregressive-tts
+    spec:
+      containers:
+      - name: vllm-sim
+        image: ghcr.io/llm-d/llm-d-inference-sim:v0.10.2
+        imagePullPolicy: IfNotPresent
+        args:
+        - --model
+        - qwen3-omni # matches the real backend's --served-model-name (see ./20-deployment-vllm-omni-tts.yaml) so /v1/chat/completions requests using "model":"qwen3-omni" validate against both real and sim pods identically
+        - --port
+        - "8000"
+        - --mode
+        - echo
+        - --log-http
+        # Instant response by default (good for proving plain alternation).
+        # Add latency to force overlapping in-flight requests and make
+        # load-aware scorers (queue-scorer/active-request-scorer) show a real
+        # choice instead of round-robin-by-coincidence -- see ../README.md:
+        #   oc patch deployment vllm-tts-sim -n vllm-omni-validation --type=json \
+        #     -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--time-to-first-token"},
+        #          {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"5s"}]'
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

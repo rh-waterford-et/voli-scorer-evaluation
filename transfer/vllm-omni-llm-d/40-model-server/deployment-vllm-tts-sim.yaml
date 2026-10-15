@@ -1,0 +1,60 @@
+# Live-exported from the WetLab cluster (`oc get deployment vllm-tts-sim -n wetlab-ai`).
+#
+# OPTIONAL. A CPU-only simulator that joins the same InferencePool without
+# needing a GPU or downloading the real model -- useful for testing the
+# llm-d routing path (Gateway -> HTTPRoute -> InferencePool -> EPP) end to
+# end on the new cluster before the real vllm-omni GPU workload is scaled up.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-tts-sim
+  namespace: wetlab-ai
+  labels:
+    app: vllm-tts-sim
+spec:
+  replicas: 0 # <-- set to 1 to smoke-test routing without a GPU
+  selector:
+    matchLabels:
+      app: multimodal-inference-pool
+      llm-d.ai/model-arch: autoregressive-tts
+  template:
+    metadata:
+      labels:
+        app: multimodal-inference-pool
+        llm-d.ai/engine-type: vllm
+        llm-d.ai/model-arch: autoregressive-tts
+    spec:
+      containers:
+      - name: vllm-sim
+        image: ghcr.io/llm-d/llm-d-inference-sim:v0.10.2
+        imagePullPolicy: IfNotPresent
+        args:
+        - --model
+        - OuteAI/OuteTTS-0.3-1B
+        - --port
+        - "8000"
+        - --mode
+        - echo
+        - --log-http
+        - --time-to-first-token
+        - 5s
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

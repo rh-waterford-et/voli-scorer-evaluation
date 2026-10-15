@@ -1,0 +1,106 @@
+# Identical to ../../20-chart/values-wetlab-ai.yaml -- this chart's values
+# are namespace-agnostic (it uses {{ .Release.Namespace }} throughout), so
+# nothing here actually needed to change for this cluster. Copied into this
+# overlay only so it's self-contained -- see that file's header comments for
+# the full drift history (image tag, selector, scheduling profile) this
+# reproduces from the live WetLab EPP.
+
+httpRoute:
+  create: false # the live HTTPRoute's path-matching rules aren't expressible via chart values -- applied standalone, see ../../30-overrides/httproute-tts.yaml (or ./10-httproute-tts.yaml for this cluster)
+
+provider:
+  name: none
+
+router:
+  clusterDomain: cluster.local
+
+  modelServers:
+    protocol: http
+    targetPorts:
+      - number: 8000
+    matchLabels:
+      app: multimodal-inference-pool # <-- must match the labels on your vllm-omni pods, see ./20-deployment-vllm-omni-tts.yaml
+
+  inferencePool:
+    create: true
+    failureMode: FailOpen
+
+  epp:
+    replicas: 1
+    extProcPort: 9002
+    flags:
+      allow-experimental-plugins: true
+      secure-serving: false
+    image:
+      registry: quay.io/rh_et_wd
+      repository: llm-d-router-endpoint-picker
+      # NOT "latest" -- the live WetLab Deployment was hand-patched
+      # (kubectl-edit/kubectl-replace, confirmed via managedFields) to run
+      # ":new-approach", not whatever the chart's default values.yaml says.
+      # ":latest" may not even understand the tts.yaml EndpointPickerConfig
+      # format in use below (apiVersion: inference.networking.x-k8s.io/v1alpha1,
+      # not llm-d.ai/v1alpha1) -- untested, don't assume compatibility.
+      tag: new-approach
+      pullPolicy: Always
+    metricsDataSource:
+      scheme: http
+      path: /metrics
+      insecureSkipVerify: true
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+    # Same TTS scheduling profile proven live on WetLab. multimodal-plugins.yaml
+    # kept alongside in case you want to switch pluginsConfigFile to it later
+    # (e.g. for a queue-depth-based load-balancing test).
+    pluginsConfigFile: tts.yaml
+    pluginsCustomConfig:
+      multimodal-plugins.yaml: |
+        apiVersion: llm-d.ai/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        - type: queue-scorer
+        - type: modality-filter
+        - type: max-score-picker
+        - type: single-profile-handler
+        schedulingProfiles:
+        - name: default
+          plugins:
+          - pluginRef: modality-filter
+          - pluginRef: max-score-picker
+          - pluginRef: queue-scorer
+            weight: 1
+      tts.yaml: |
+        apiVersion: inference.networking.x-k8s.io/v1alpha1
+        kind: EndpointPickerConfig
+        plugins:
+        - name: activeRequest
+          type: active-request-scorer
+        - name: maxScore
+          type: max-score-picker
+        schedulingProfiles:
+        - name: default
+          plugins:
+          - pluginRef: activeRequest
+          - pluginRef: maxScore
+        dataLayer:
+          injectDefaults: false
+
+  monitoring:
+    prometheus:
+      enabled: false
+
+  proxy:
+    enabled: false
+
+  tokenizer:
+    enabled: false
+
+  tracing:
+    enabled: false
+
+  latencyPredictor:
+    enabled: false

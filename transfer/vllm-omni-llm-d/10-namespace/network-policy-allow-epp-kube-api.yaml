@@ -1,0 +1,28 @@
+# Copied from wetlab-operations/networking/network-policies/allow-epp-kube-api.yaml
+#
+# NOTE / known issue on the source cluster: the podSelector below
+# (`llm-d-router-standalone: my-router-epp`) does NOT match the labels
+# actually used by the EPP pods deployed by the llm-d-router-gateway chart
+# (`llm-d-router-gateway: endpoint-picker-epp`). On WetLab this policy
+# effectively never applies to the running EPP pod. It's included here as-is
+# for parity, but the selector has been corrected below so it actually takes
+# effect on the new cluster. Only needed if you're running the namespace with
+# a default-deny egress NetworkPolicy baseline (see ../manifests/wetlab-ai/).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-epp-kube-api
+  namespace: wetlab-ai
+spec:
+  podSelector:
+    matchLabels:
+      llm-d-router-gateway: endpoint-picker-epp # corrected to match the actual EPP pod label
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 172.30.0.1/32 # <-- verify this is the correct kube-api service ClusterIP on the new cluster (oc get svc kubernetes -n default)
+      ports:
+        - protocol: TCP
+          port: 443

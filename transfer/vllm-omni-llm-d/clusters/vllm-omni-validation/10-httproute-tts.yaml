@@ -1,0 +1,35 @@
+# Based on ../../30-overrides/httproute-tts.yaml, retargeted:
+#   - namespace: vllm-omni-validation
+# backendRefs[].name must keep matching the Helm release name used in
+# `helm upgrade --install <name> ...` below (release name "endpoint-picker"
+# -> InferencePool name "endpoint-picker", since the chart derives it from
+# {{ .Release.Name }}). If you ever change the release name, update this too.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: endpoint-picker
+  namespace: vllm-omni-validation
+spec:
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: inference-gateway
+    sectionName: http
+  rules:
+  - backendRefs:
+    - group: inference.networking.k8s.io
+      kind: InferencePool
+      name: endpoint-picker
+      weight: 1
+    matches:
+    - path:
+        type: Exact
+        value: /v1/chat/completions
+    - path:
+        type: Exact
+        value: /v1/audio/speech
+    - path:
+        type: Exact
+        value: /v1/audio/transcriptions
+    timeouts:
+      request: 600s
