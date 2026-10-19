@@ -229,7 +229,24 @@ Each run reports the requested **profile and scorer**, valid/failed response cou
 
 TTFT, TTFA, and end-to-end latency are observed at the client. Text chunk gaps are an ITL proxy, and text TPOT is an estimate because one streamed chunk can contain multiple tokens. P99 from fewer than 100 valid responses is only a rough tail indicator. The profile/scorer label comes from the script's map and requested header; routing and latency alone do not prove that a scorer made a particular decision.
 
-## Create a Mardown report 
+## EPP raw scores and weighted totals
+
+EPP must run with `--v=4` and JSON logging (`--zap-encoder json`).
+
+```bash
+python scripts/stream_metrics.py \
+  --endpoint /v1/audio/speech --model qwen3-tts \
+  --profile queueRunningProfile \
+  --run 10x1 --run 50x10 \
+  --epp-scores --debug \
+  --output-json queue_running_scores.json
+```
+
+- `--epp-scores`: collect raw scores, weighted totals, and picker selections.
+- `--debug`: display per-request score tables.
+- `--output-json`: save results, including scores, to a JSON file.
+
+## Create a Mardown report
 
 The stream_metrics.py script creates a json file for reference.
 

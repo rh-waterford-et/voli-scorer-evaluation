@@ -23,6 +23,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from epp_scores import EppScoreCollector, print_request_scores, print_score_summary
+
 
 # Profiles in the current vllm-omni-validation EPP tts.yaml. Keep this map in
 # step with that ConfigMap if the deployment's profile names change.
@@ -454,6 +456,8 @@ def print_debug_results(results, total):
             print(f"    TPOT denominator: {result['tpot_basis']}")
         if result["error"]:
             print(f"    Error: {result['error']}")
+        if "epp_scores" in result:
+            print_request_scores(result["epp_scores"])
         print()
 
 
@@ -554,27 +558,42 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
         except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError) as error:
             print(f"Backend lookup unavailable: {error}", file=sys.stderr)
     since_time = (datetime.now(timezone.utc) - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    collector = EppScoreCollector(args, profile, since_time, oc_output) if args.epp_scores else None
+    if collector:
+        collector.start()
+        if collector.config:
+            scorer = " + ".join(f"{s['type']} (weight {s['weight']:g})" for s in collector.scorers.values()) or "no scorers"
     print(f"  {profile} ({scorer}): {iterations} requests, concurrency {concurrency}...", flush=True)
     benchmark_start = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = [
-            executor.submit(run_request, i, run_args, prompts[(i - 1) % len(prompts)], modalities, run_id)
-            for i in range(1, iterations + 1)
-        ]
-        results = [None] * iterations
-        for future in as_completed(futures):
-            result = future.result()
-            results[result["iteration"] - 1] = result
+    try:
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = [
+                executor.submit(run_request, i, run_args, prompts[(i - 1) % len(prompts)], modalities, run_id)
+                for i in range(1, iterations + 1)
+            ]
+            results = [None] * iterations
+            for future in as_completed(futures):
+                result = future.result()
+                results[result["iteration"] - 1] = result
+    except BaseException:
+        if collector:
+            collector.close()
+        raise
     benchmark_seconds = time.perf_counter() - benchmark_start
-    for result in results:
-        add_metrics(result, tokenizer, modalities)
-    if not args.no_backend_lookup and (gateway_pods or args.gateway_pod):
-        try:
-            latest_ip_to_pod, _ = discover_pods(args.namespace, args.gateway_name)
-            ip_to_pod.update(latest_ip_to_pod)
-        except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
-            pass
-        resolve_backends(run_args, results, run_id, since_time, ip_to_pod, gateway_pods)
+    try:
+        for result in results:
+            add_metrics(result, tokenizer, modalities)
+        if not args.no_backend_lookup and (gateway_pods or args.gateway_pod):
+            try:
+                latest_ip_to_pod, _ = discover_pods(args.namespace, args.gateway_name)
+                ip_to_pod.update(latest_ip_to_pod)
+            except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError):
+                pass
+            resolve_backends(run_args, results, run_id, since_time, ip_to_pod, gateway_pods)
+        score_summary = collector.finish(results) if collector else None
+    finally:
+        if collector:
+            collector.close()
     for result in results:
         if result["pod"] is None and result["response_pod_header"]:
             result["pod"] = result["response_pod_header"]
@@ -587,7 +606,7 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     missing = [r for r in results if r["missing_modalities"]]
     counts = Counter(r["pod"] or "unknown" for r in results)
     samples = metric_samples(valid)
-    return {
+    run = {
         "run_id": run_id,
         "profile": profile,
         "scorer": scorer,
@@ -605,6 +624,9 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
         "_failures": failures,
         "_missing": missing,
     }
+    if score_summary is not None:
+        run["epp_scores"] = score_summary
+    return run
 
 
 def print_run_report(run, args, modalities):
@@ -649,6 +671,10 @@ def print_run_report(run, args, modalities):
     print("  " + "-" * 74)
     for pod, count in sorted(counts.items()):
         print(f"  {pod:<59} {count:>6} {count / iterations:>6.1%}")
+
+    if "epp_scores" in run:
+        print_section("EPP scoring")
+        print_score_summary(run["epp_scores"])
 
     if len(counts) > 1:
         print_section("Latency by pod (valid responses)")
@@ -738,6 +764,8 @@ def print_suite_report(runs, args, modalities):
             )
         route = ", ".join(f"{pod}: {count}" for pod, count in sorted(run["routing"].items()))
         print(f"     Pods: {route}")
+        if "epp_scores" in run:
+            print_score_summary(run["epp_scores"])
         if run["_failures"] or run["_missing"]:
             print(f"     Issues: use --debug or --output-json for request details")
     print_section("Notes")
@@ -790,7 +818,13 @@ def main():
     parser.add_argument("--gateway-pod", action="append", help="Gateway pod name; repeat for multiple pods.")
     parser.add_argument("--gateway-container", default="istio-proxy")
     parser.add_argument("--gateway-wait", type=float, default=10, help="Seconds to wait for access logs.")
-    parser.add_argument("--no-backend-lookup", action="store_true", help="Skip read-only oc queries.")
+    parser.add_argument("--epp-scores", action="store_true", help="Collect EPP raw scores and weighted totals; EPP needs JSON logging and --v=4. Requires PyYAML for weights. Use --debug for per-request tables.")
+    parser.add_argument("--epp-deployment", default="endpoint-picker-epp", help="Deployment whose EPP logs and configuration are read.")
+    parser.add_argument("--epp-container", default="epp", help="EPP container name.")
+    parser.add_argument("--epp-configmap", help="Override the plugin ConfigMap name (otherwise discovered from the EPP Deployment).")
+    parser.add_argument("--epp-config-key", help="Override the plugin ConfigMap data key (otherwise discovered from --config-file).")
+    parser.add_argument("--epp-wait", type=float, default=5, help="Seconds to wait for missing EPP score records after requests and Gateway lookup finish.")
+    parser.add_argument("--no-backend-lookup", action="store_true", help="Skip pod/Gateway backend lookup. --epp-scores still reads EPP resources and logs.")
     parser.add_argument("--output-json", type=Path, help="Save per-request results and run summaries as JSON.")
     parser.add_argument("--debug", action="store_true", help="Show details for every request.")
     args = parser.parse_args()
@@ -803,6 +837,8 @@ def main():
         parser.error("--tokenizer is required for chat-completions runs")
     if args.iterations < 1 or args.concurrency < 1 or args.timeout <= 0 or args.gateway_wait < 0:
         parser.error("iterations and concurrency must be positive; timeout must be positive; gateway-wait cannot be negative")
+    if not math.isfinite(args.epp_wait) or args.epp_wait < 0:
+        parser.error("--epp-wait must be finite and nonnegative")
     if args.profile is not None and (not args.profile.strip() or "\r" in args.profile or "\n" in args.profile):
         parser.error("--profile must be a nonempty profile name without line breaks")
     plan, suite_mode = suite_plan(args, parser)
