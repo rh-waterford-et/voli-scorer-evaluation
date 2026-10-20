@@ -85,6 +85,7 @@ export default function History() {
     {
       key: 'source',
       label: 'Source',
+      title: 'dashboard = run started from this UI · report = committed JSON under reports/ (read-only)',
       sort: (row) => row.source,
       render: (row) => <span className="chip">{row.source}</span>,
     },
@@ -103,6 +104,7 @@ export default function History() {
     {
       key: 'profiles',
       label: 'Profiles',
+      title: 'Distinct EPP profiles exercised',
       align: 'right',
       sort: (row) => row.summary?.profiles.length ?? 0,
       render: (row) => fmtInt(row.summary?.profiles.length),
@@ -110,6 +112,7 @@ export default function History() {
     {
       key: 'requests',
       label: 'Requests',
+      title: 'Total requests across all profile runs',
       align: 'right',
       sort: (row) => row.summary?.requests ?? 0,
       render: (row) => fmtInt(row.summary?.requests),
@@ -117,6 +120,7 @@ export default function History() {
     {
       key: 'valid',
       label: 'Valid / Failed',
+      title: 'Valid responses vs failed requests',
       align: 'right',
       sort: (row) => (row.summary?.valid ?? 0) - (row.summary?.failed ?? 0),
       render: (row) => (

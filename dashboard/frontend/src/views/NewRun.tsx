@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import HelpHint from '../components/HelpHint'
 import type { ClusterProfiles, ProfileInfo } from '../types'
 
 interface Load {
@@ -217,27 +218,42 @@ export default function NewRun() {
         <h2>Basics</h2>
         <div className="form-grid">
           <div>
-            <label>Run name (optional)</label>
+            <label>
+              Run name (optional)
+              <HelpHint text="A label for this run in History. If left empty, the selected profile names are used." />
+            </label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}
               placeholder="e.g. tts load combos repeat 1" />
           </div>
           <div>
-            <label>Endpoint</label>
+            <label>
+              Endpoint
+              <HelpHint text="Which API to test. /v1/audio/speech sends text-to-speech requests. /v1/chat/completions sends chat requests and needs a tokenizer for token counting." />
+            </label>
             <select value={endpoint} onChange={(e) => setEndpoint(e.target.value as typeof endpoint)}>
               <option value="/v1/audio/speech">/v1/audio/speech (TTS)</option>
               <option value="/v1/chat/completions">/v1/chat/completions (chat)</option>
             </select>
           </div>
           <div>
-            <label>Model</label>
+            <label>
+              Model
+              <HelpHint text="Model name sent in each API request. Must match a model the Gateway serves (e.g. qwen3-tts)." />
+            </label>
             <input type="text" value={model} onChange={(e) => setModel(e.target.value)} />
           </div>
           <div>
-            <label>Gateway URL</label>
+            <label>
+              Gateway URL
+              <HelpHint text="Address of the inference Gateway. Requests go straight to it — no cluster login is needed for the latency measurements." />
+            </label>
             <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} />
           </div>
           <div>
-            <label>Namespace</label>
+            <label>
+              Namespace
+              <HelpHint text="Cluster namespace for the read-only oc lookups: pod names, Gateway logs, EPP config. Needs a valid oc login; without it, latency still works but routing shows 'unknown'." />
+            </label>
             <input type="text" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
           </div>
         </div>
@@ -257,7 +273,10 @@ export default function NewRun() {
               onChange={(e) => setProfileSearch(e.target.value)} />
           </div>
           <div>
-            <label>EPP deployment / container (cluster lookup)</label>
+            <label>
+              EPP deployment / container (cluster lookup)
+              <HelpHint text="Where to read the live EPP plugin ConfigMap from when using 'Load from cluster'. Read-only oc get; nothing on the cluster is changed." />
+            </label>
             <div style={{ display: 'flex', gap: 8 }}>
               <input type="text" value={eppDeployment} onChange={(e) => setEppDeployment(e.target.value)} />
               <input type="text" value={eppContainer} onChange={(e) => setEppContainer(e.target.value)} />
@@ -308,10 +327,16 @@ export default function NewRun() {
         </p>
         {loads.map((load, index) => (
           <div key={index} className="load-row">
-            <label>Requests</label>
+            <label>
+              Requests
+              <HelpHint text="Total requests sent in the run (the N in --run NxC)." />
+            </label>
             <input type="number" min={1} value={load.iterations}
               onChange={(e) => updateLoad(index, { iterations: Number(e.target.value) })} />
-            <label>Concurrency</label>
+            <label>
+              Concurrency
+              <HelpHint text="Maximum requests kept in flight at the same time (the C in --run NxC)." />
+            </label>
             <input type="number" min={1} value={load.concurrency}
               onChange={(e) => updateLoad(index, { concurrency: Number(e.target.value) })} />
             <button disabled={loads.length === 1} onClick={() => setLoads(loads.filter((_, i) => i !== index))}>
@@ -328,7 +353,10 @@ export default function NewRun() {
         <h2>Input</h2>
         <div className="form-grid">
           <div>
-            <label>Prompt mode</label>
+            <label>
+              Prompt mode
+              <HelpHint text="Single prompt: the same input is sent for every request. Multiple prompts: one prompt per nonempty line, cycled through per request." />
+            </label>
             <select value={promptMode} onChange={(e) => setPromptMode(e.target.value as 'single' | 'multi')}>
               <option value="single">Single prompt</option>
               <option value="multi">Multiple prompts (one per line)</option>
@@ -337,7 +365,10 @@ export default function NewRun() {
           {isChat && (
             <>
               <div>
-                <label>Modalities</label>
+                <label>
+                  Modalities
+                  <HelpHint text="Output types requested from chat completions: text, audio, or both." />
+                </label>
                 <select value={modalities} onChange={(e) => setModalities(e.target.value)}>
                   <option value="text,audio">text,audio</option>
                   <option value="text">text</option>
@@ -345,30 +376,45 @@ export default function NewRun() {
                 </select>
               </div>
               <div>
-                <label>Tokenizer (required)</label>
+                <label>
+                  Tokenizer (required)
+                  <HelpHint text="Tokenizer used to count generated tokens for the TPOT estimate. Use the model's own tokenizer, e.g. Qwen/Qwen3-Omni-30B-A3B-Instruct." />
+                </label>
                 <input type="text" value={tokenizer} onChange={(e) => setTokenizer(e.target.value)}
                   placeholder="Qwen/Qwen3-Omni-30B-A3B-Instruct" />
               </div>
             </>
           )}
           <div>
-            <label>Voice (optional)</label>
+            <label>
+              Voice (optional)
+              <HelpHint text="Voice for generated audio, e.g. vivian." />
+            </label>
             <input type="text" value={voice} onChange={(e) => setVoice(e.target.value)} placeholder="vivian" />
           </div>
           <div>
-            <label>Audio format (optional)</label>
+            <label>
+              Audio format (optional)
+              <HelpHint text="Format of the generated audio, e.g. pcm." />
+            </label>
             <input type="text" value={audioFormat} onChange={(e) => setAudioFormat(e.target.value)} placeholder="pcm" />
           </div>
         </div>
         {promptMode === 'single' ? (
           <div style={{ marginTop: 12 }}>
-            <label>Prompt</label>
+            <label>
+              Prompt
+              <HelpHint text="Sent as the input of every request." />
+            </label>
             <input type="text" style={{ width: '100%' }} value={prompt} onChange={(e) => setPrompt(e.target.value)}
               placeholder="Say hello and introduce yourself in one sentence." />
           </div>
         ) : (
           <div style={{ marginTop: 12 }}>
-            <label>Prompts (cycled per request; empty lines ignored)</label>
+            <label>
+              Prompts
+              <HelpHint text="One prompt per nonempty line; requests cycle through them in order. Mixing short and long inputs helps exercise load-based scorers." />
+            </label>
             <textarea rows={6} value={promptsText} onChange={(e) => setPromptsText(e.target.value)}
               placeholder={'Hello. Your report is ready.\nGood morning, welcome to the briefing.'} />
           </div>
@@ -379,43 +425,63 @@ export default function NewRun() {
         <h2>Options</h2>
         <div className="form-grid">
           <div>
-            <label>Session length (0 = off)</label>
+            <label>
+              Session length (0 = off)
+              <HelpHint text="Groups requests into conversations of up to this many sequential requests and replays each conversation's token. 0 = independent requests. Needed to exercise session affinity." />
+            </label>
             <input type="number" min={0} value={sessionLength}
               onChange={(e) => setSessionLength(Number(e.target.value))} />
           </div>
           <div>
-            <label>Session header</label>
+            <label>
+              Session header
+              <HelpHint text="HTTP header used to send and receive the session token (default: x-session-token)." />
+            </label>
             <input type="text" value={sessionHeader} disabled={sessionLength < 2}
               onChange={(e) => setSessionHeader(e.target.value)} />
           </div>
           <div>
-            <label>Gateway log wait (s)</label>
+            <label>
+              Gateway log wait (s)
+              <HelpHint text="Seconds to wait for Gateway access logs when matching requests to backend pods. Increase it if routing often shows 'unknown'." />
+            </label>
             <input type="number" min={0} value={gatewayWait}
               onChange={(e) => setGatewayWait(Number(e.target.value))} />
           </div>
           <div>
-            <label>EPP score wait (s)</label>
+            <label>
+              EPP score wait (s)
+              <HelpHint text="Extra seconds to wait for missing EPP score records after the requests finish." />
+            </label>
             <input type="number" min={0} value={eppWait}
               onChange={(e) => setEppWait(Number(e.target.value))} />
           </div>
           <div>
-            <label>Request timeout (s)</label>
+            <label>
+              Request timeout (s)
+              <HelpHint text="Per-request socket timeout. Requests that exceed it are recorded as failed." />
+            </label>
             <input type="number" min={1} value={timeoutSeconds}
               onChange={(e) => setTimeoutSeconds(Number(e.target.value))} />
           </div>
           <div>
-            <label>API key (optional)</label>
+            <label>
+              API key (optional)
+              <HelpHint text="Bearer token sent to the Gateway if it requires authentication." />
+            </label>
             <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
           </div>
         </div>
         <div className="check-grid">
           <label className="check">
             <input type="checkbox" checked={eppScores} onChange={(e) => setEppScores(e.target.checked)} />
-            Collect EPP scores (needs EPP at --v=4 with JSON logging)
+            Collect EPP scores
+            <HelpHint text="Record per-request raw scorer scores, weighted contributions, and the picker's choice. Requires EPP running with --v=4 and JSON logging (--zap-encoder json)." />
           </label>
           <label className="check">
             <input type="checkbox" checked={noBackendLookup} onChange={(e) => setNoBackendLookup(e.target.checked)} />
-            Skip pod/Gateway backend lookup (no oc routing resolution)
+            Skip pod/Gateway backend lookup
+            <HelpHint text="Skip the oc queries that resolve which pod served each request. Latency metrics still work; routing will show 'unknown'." />
           </label>
         </div>
       </div>

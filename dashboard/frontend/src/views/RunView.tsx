@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import SortTable, { type Column } from '../components/SortTable'
 import { EppScoreView, Histogram, MetricBarChart } from '../components/Charts'
+import HelpHint from '../components/HelpHint'
 import { api, openRunEvents } from '../api'
 import type { RequestResult, RunDetail, ScriptRun } from '../types'
 import {
@@ -114,6 +115,7 @@ function RequestsTable({ run }: { run: ScriptRun }) {
     {
       key: 'status',
       label: 'Status',
+      title: 'ok = completed with all requested output',
       sort: (r) => r.status,
       render: (r) =>
         r.status === 'ok' ? (
@@ -124,10 +126,10 @@ function RequestsTable({ run }: { run: ScriptRun }) {
           </span>
         ),
     },
-    { key: 'pod', label: 'Pod', sort: (r) => r.pod ?? '', render: (r) => <span className="mono">{shortPod(r.pod)}</span> },
-    { key: 'ttfa', label: 'TTFA ms', align: 'right', sort: (r) => r.ttfa_ms ?? null, render: (r) => fmtMs(r.ttfa_ms) },
-    { key: 'ttft', label: 'TTFT ms', align: 'right', sort: (r) => r.ttft_ms ?? null, render: (r) => fmtMs(r.ttft_ms) },
-    { key: 'e2e', label: 'E2E ms', align: 'right', sort: (r) => r.e2e_ms ?? null, render: (r) => fmtMs(r.e2e_ms) },
+    { key: 'pod', label: 'Pod', title: 'Backend pod that served the request, resolved from Gateway logs or a response header', sort: (r) => r.pod ?? '', render: (r) => <span className="mono">{shortPod(r.pod)}</span> },
+    { key: 'ttfa', label: 'TTFA ms', title: 'Time to first audio event, ms — client-observed', align: 'right', sort: (r) => r.ttfa_ms ?? null, render: (r) => fmtMs(r.ttfa_ms) },
+    { key: 'ttft', label: 'TTFT ms', title: 'Time to first text/reasoning event, ms — client-observed', align: 'right', sort: (r) => r.ttft_ms ?? null, render: (r) => fmtMs(r.ttft_ms) },
+    { key: 'e2e', label: 'E2E ms', title: 'End-to-end request duration, ms', align: 'right', sort: (r) => r.e2e_ms ?? null, render: (r) => fmtMs(r.e2e_ms) },
     {
       key: 'epp',
       label: 'EPP scores',
@@ -269,10 +271,11 @@ export default function RunView() {
       render: (r) => <strong className="mono">{r.profile}</strong>,
     },
     { key: 'scorer', label: 'Scorer', sort: (r) => r.scorer, render: (r) => <span className="muted">{r.scorer}</span> },
-    { key: 'load', label: 'Load', sort: (r) => r.concurrency, render: (r) => loadLabel(r) },
+    { key: 'load', label: 'Load', title: 'iterations × max concurrency', sort: (r) => r.concurrency, render: (r) => loadLabel(r) },
     {
       key: 'valid',
       label: 'Valid',
+      title: 'Responses that succeeded with all requested output',
       align: 'right',
       sort: (r) => r.valid_responses,
       render: (r) => (
@@ -285,31 +288,32 @@ export default function RunView() {
     {
       key: 'failed',
       label: 'Failed',
+      title: 'Requests that errored, timed out, or streamed nothing',
       align: 'right',
       sort: (r) => r.failed_responses,
       render: (r) => (
         <span style={{ color: r.failed_responses ? 'var(--bad)' : 'inherit' }}>{r.failed_responses}</span>
       ),
     },
-    { key: 'duration', label: 'Duration', align: 'right', sort: (r) => r.duration_seconds, render: (r) => fmtDuration(r.duration_seconds) },
+    { key: 'duration', label: 'Duration', title: 'Wall-clock duration of the run', align: 'right', sort: (r) => r.duration_seconds, render: (r) => fmtDuration(r.duration_seconds) },
   ]
   if (hasAudio) {
     columns.push(
-      { key: 'ttfa_p50', label: 'TTFA p50', align: 'right', sort: (r) => metricOf(r, 'ttfa_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttfa_ms', 'p50')) },
-      { key: 'ttfa_p99', label: 'TTFA p99', align: 'right', sort: (r) => metricOf(r, 'ttfa_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'ttfa_ms', 'p99')) },
+      { key: 'ttfa_p50', label: 'TTFA p50', title: 'Time to first audio event, ms — client-observed (median)', align: 'right', sort: (r) => metricOf(r, 'ttfa_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttfa_ms', 'p50')) },
+      { key: 'ttfa_p99', label: 'TTFA p99', title: 'Time to first audio event, ms — client-observed (tail)', align: 'right', sort: (r) => metricOf(r, 'ttfa_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'ttfa_ms', 'p99')) },
     )
   }
   if (hasText) {
     columns.push(
-      { key: 'ttft_p50', label: 'TTFT p50', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p50')) },
-      { key: 'ttft_p99', label: 'TTFT p99', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p99')) },
-      { key: 'tpot', label: 'TPOT~ mean', align: 'right', sort: (r) => metricOf(r, 'tpot_estimate_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'tpot_estimate_ms', 'mean')) },
+      { key: 'ttft_p50', label: 'TTFT p50', title: 'Time to first text/reasoning event, ms — client-observed (median)', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p50')) },
+      { key: 'ttft_p99', label: 'TTFT p99', title: 'Time to first text/reasoning event, ms — client-observed (tail)', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p99')) },
+      { key: 'tpot', label: 'TPOT~ mean', title: 'Estimated time per output token, ms — a streamed chunk can contain several tokens', align: 'right', sort: (r) => metricOf(r, 'tpot_estimate_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'tpot_estimate_ms', 'mean')) },
     )
   }
   columns.push(
-    { key: 'e2e_mean', label: 'E2E mean', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'mean')) },
-    { key: 'e2e_p50', label: 'E2E p50', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'p50')) },
-    { key: 'e2e_p99', label: 'E2E p99', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'p99')) },
+    { key: 'e2e_mean', label: 'E2E mean', title: 'End-to-end request duration, ms', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'mean')) },
+    { key: 'e2e_p50', label: 'E2E p50', title: 'End-to-end request duration, ms (median)', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'p50')) },
+    { key: 'e2e_p99', label: 'E2E p99', title: 'End-to-end request duration, ms (tail)', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'p99')) },
   )
 
   const chartData = runs.map((run) => ({
@@ -433,7 +437,8 @@ export default function RunView() {
             <h2>Comparison chart</h2>
             <div className="actions">
               <label>
-                Metric{' '}
+                Metric
+                <HelpHint text="Which latency metric to chart. Bars show p50 and p99 per profile and load." />
                 <select value={chartMetric} onChange={(e) => setChartMetric(e.target.value)}>
                   {metricKeys.map((key) => (
                     <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>
@@ -448,7 +453,8 @@ export default function RunView() {
             <h2>Latency distribution</h2>
             <div className="actions">
               <label>
-                Run{' '}
+                Run
+                <HelpHint text="Which profile × load run to show." />
                 <select value={histoRunId} onChange={(e) => setHistoRunId(e.target.value)}>
                   {runs.map((run) => (
                     <option key={run.run_id} value={run.run_id}>
@@ -458,7 +464,8 @@ export default function RunView() {
                 </select>
               </label>
               <label>
-                Metric{' '}
+                Metric
+                <HelpHint text="Which per-request latency to bucket. Counts how many requests fell into each latency range." />
                 <select value={histoMetric} onChange={(e) => setHistoMetric(e.target.value)}>
                   {metricKeys.map((key) => (
                     <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>

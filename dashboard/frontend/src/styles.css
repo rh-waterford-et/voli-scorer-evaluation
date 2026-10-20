@@ -370,7 +370,7 @@ button.link {
 .load-row {
   display: flex;
   gap: 8px;
-  align-items: end;
+  align-items: center;
   margin-bottom: 8px;
   max-width: 520px;
 }
@@ -400,4 +400,57 @@ button.link {
 
 .run-detail {
   padding: 4px 0;
+}
+
+.hint-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  vertical-align: middle;
+  /* vertical-align:middle centers on the x-height middle, which sits slightly
+     low next to label text; nudge up 1px to sit optically centered. */
+  top: -1px;
+}
+
+.hint-button {
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hint-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.hint-popup {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2b3138;
+  color: #eef1f4;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  width: max-content;
+  max-width: min(320px, 85vw);
+  z-index: 60;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  text-align: left;
 }

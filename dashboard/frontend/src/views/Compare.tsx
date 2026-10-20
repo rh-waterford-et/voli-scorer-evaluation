@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts'
 import { MetricBarChart } from '../components/Charts'
+import HelpHint from '../components/HelpHint'
 import { api } from '../api'
 import type { RunDetail, ScriptRun } from '../types'
 import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
@@ -143,7 +144,8 @@ export default function Compare() {
       <div className="panel">
         <div className="actions">
           <label>
-            Metric{' '}
+            Metric
+            <HelpHint text="Which latency metric to compare across the selected runs." />
             <select value={metric} onChange={(e) => setMetric(e.target.value)}>
               {metricKeys.map((key) => (
                 <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>
@@ -151,7 +153,8 @@ export default function Compare() {
             </select>
           </label>
           <label>
-            Statistic{' '}
+            Statistic
+            <HelpHint text="Which summary statistic to compare: mean (average), p50 (median), or p99 (tail)." />
             <select value={stat} onChange={(e) => setStat(e.target.value as Stat)}>
               <option value="mean">mean</option>
               <option value="p50">p50</option>
@@ -159,7 +162,8 @@ export default function Compare() {
             </select>
           </label>
           <label>
-            Load{' '}
+            Load
+            <HelpHint text="Only profile runs at this load setting (requests × concurrency) are compared." />
             <select value={load} onChange={(e) => setLoad(e.target.value)}>
               {loads.map((value) => (
                 <option key={value} value={value}>{value}</option>
