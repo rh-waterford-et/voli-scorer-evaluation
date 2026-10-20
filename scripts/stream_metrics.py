@@ -15,6 +15,7 @@ import ipaddress
 import json
 import math
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -149,7 +150,7 @@ def payload_for(args, prompt, modalities):
     return payload
 
 
-def run_request(index, args, prompt, modalities, run_id):
+def run_request(index, args, prompt, modalities, run_id, session_token=None):
     sent_id = str(uuid.uuid4())
     marker = f"voli-stream-metrics/{run_id}/{index}"
     result = {
@@ -183,6 +184,11 @@ def run_request(index, args, prompt, modalities, run_id):
         headers["Authorization"] = f"Bearer {args.api_key}"
     if args.profile:
         headers["EPP-Profile"] = args.profile
+    if args.session_length:
+        result["session_token_sent"] = session_token
+        result["session_token_received"] = None
+        if session_token:
+            headers[args.session_header] = session_token
     request = urllib.request.Request(
         endpoint_url(args.url, args.endpoint),
         data=json.dumps(payload_for(args, prompt, modalities)).encode("utf-8"),
@@ -200,6 +206,8 @@ def run_request(index, args, prompt, modalities, run_id):
             result["http_status"] = response.status
             result["request_id_response"] = response.headers.get("X-Request-Id")
             result["response_pod_header"] = response.headers.get("X-Inference-Pod")
+            if args.session_length:
+                result["session_token_received"] = response.headers.get(args.session_header)
             content_type = response.headers.get("Content-Type", "")
             if "text/event-stream" not in content_type.lower():
                 snippet = response.read(1000).decode("utf-8", errors="replace")
@@ -260,7 +268,10 @@ def run_request(index, args, prompt, modalities, run_id):
             raise RuntimeError("stream completed without text or audio data")
         result["status"] = "ok"
     except urllib.error.HTTPError as error:
-        body = error.read(1000).decode("utf-8", errors="replace")
+        with error:
+            if args.session_length and error.headers is not None:
+                result["session_token_received"] = error.headers.get(args.session_header)
+            body = error.read(1000).decode("utf-8", errors="replace")
         result["http_status"] = error.code
         result["error"] = f"HTTP {error.code}: {body}"
     except urllib.error.URLError as error:
@@ -272,6 +283,23 @@ def run_request(index, args, prompt, modalities, run_id):
         result["text"] = "".join(text_parts)
         result["visible_text"] = "".join(visible_parts)
     return result
+
+
+def run_session(start, stop, args, prompts, modalities, run_id):
+    """Run one conversation sequentially, keeping its endpoint token private."""
+    token = None
+    results = []
+    for turn, index in enumerate(range(start, stop), 1):
+        result = run_request(
+            index, args, prompts[(index - 1) % len(prompts)], modalities, run_id, token
+        )
+        result["session_id"] = f"session-{(start - 1) // args.session_length + 1}"
+        result["session_turn"] = turn
+        # Some responses omit the header. Keep the last token until replaced,
+        # including when the response body fails after its headers arrived.
+        token = result["session_token_received"] or token
+        results.append(result)
+    return results
 
 
 def add_metrics(result, tokenizer, modalities):
@@ -452,6 +480,15 @@ def print_debug_results(results, total):
         else:
             id_label, request_id = "Sent ID", result["request_id_sent"]
         print(f"    Route: {result['backend_source'] or 'unavailable'}  |  {id_label}: {request_id}")
+        if "session_id" in result:
+            continuity = {True: "same pod", False: "changed pod", None: "unresolved"}
+            replay = "replayed token" if result["session_token_sent"] else "no token"
+            received = "received" if result["session_token_received"] else "missing"
+            route = "initial request" if result["session_turn"] == 1 else continuity[result["session_same_pod"]]
+            print(
+                f"    Session: {result['session_id']}, turn {result['session_turn']}  |  "
+                f"{replay}, response token {received}  |  {route}"
+            )
         if result["tpot_estimate_ms"] is not None:
             print(f"    TPOT denominator: {result['tpot_basis']}")
         if result["error"]:
@@ -544,6 +581,77 @@ def metric_summary(values):
     }
 
 
+def summarize_sessions(args, results, concurrency):
+    """Measure token coverage and observed routing, without decoding tokens."""
+    previous = {}
+    followups = []
+    for result in results:
+        before = previous.get(result["session_id"])
+        previous_pod = before["pod"] if before else None
+        result["session_previous_pod"] = previous_pod
+        result["session_same_pod"] = (
+            previous_pod == result["pod"] if previous_pod and result["pod"] else None
+        )
+        if result["session_turn"] > 1:
+            followups.append(result)
+        previous[result["session_id"]] = result
+    replayed = [r for r in followups if r["session_token_sent"]]
+    known = [r for r in replayed if r["session_same_pod"] is not None]
+    valid = [r for r in results if r["status"] == "ok" and not r["missing_modalities"]]
+    latency = {}
+    for group, selected in (
+        ("initial", [r for r in valid if r["session_turn"] == 1]),
+        ("replayed", [r for r in valid if r["session_token_sent"]]),
+    ):
+        latency[group] = {
+            metric: metric_summary([r[metric] for r in selected if r[metric] is not None])
+            for metric in ("ttft_ms", "ttfa_ms", "e2e_ms")
+        }
+    return {
+        "header": args.session_header,
+        "session_length": args.session_length,
+        "sessions": len(previous),
+        "concurrent_sessions": min(concurrency, len(previous)),
+        "followup_requests": len(followups),
+        "replayed_requests": len(replayed),
+        "followups_without_token": len(followups) - len(replayed),
+        "responses_with_token": sum(bool(r["session_token_received"]) for r in results),
+        "same_pod": sum(r["session_same_pod"] for r in known),
+        "changed_pod": sum(not r["session_same_pod"] for r in known),
+        "unresolved_pod": len(replayed) - len(known),
+        "latency": latency,
+    }
+
+
+def print_session_summary(summary):
+    print(
+        f"  Sessions: {summary['sessions']}, up to {summary['concurrent_sessions']} concurrent, "
+        f"up to {summary['session_length']} requests each"
+    )
+    print(
+        f"  Token replay: {summary['replayed_requests']}/{summary['followup_requests']} follow-ups  |  "
+        f"Response tokens: {summary['responses_with_token']}  |  Header: {summary['header']}"
+    )
+    print(
+        f"  Replayed routing: {summary['same_pod']} same pod, "
+        f"{summary['changed_pod']} changed pod, {summary['unresolved_pod']} unresolved"
+    )
+    for group in ("initial", "replayed"):
+        values = summary["latency"][group]["e2e_ms"]
+        print(
+            f"  {group.capitalize()} E2E (valid N={values['n']}): "
+            f"mean/p50/p99 {format_ms(values['mean'])}/"
+            f"{format_ms(values['p50'])}/{format_ms(values['p99'])} ms"
+        )
+    if summary["followups_without_token"]:
+        print(
+            f"  Warning: {summary['followups_without_token']} follow-ups had no token; "
+            "session affinity could not be exercised on those requests."
+        )
+    if not summary["followup_requests"]:
+        print("  Warning: no follow-up requests; session affinity was not exercised.")
+
+
 def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iterations, concurrency):
     run_args = argparse.Namespace(**vars(args))
     run_args.profile = None if profile == "default" else profile
@@ -567,14 +675,24 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     benchmark_start = time.perf_counter()
     try:
         with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            futures = [
-                executor.submit(run_request, i, run_args, prompts[(i - 1) % len(prompts)], modalities, run_id)
-                for i in range(1, iterations + 1)
-            ]
+            if args.session_length:
+                futures = [
+                    executor.submit(
+                        run_session, start, min(start + args.session_length, iterations + 1),
+                        run_args, prompts, modalities, run_id,
+                    )
+                    for start in range(1, iterations + 1, args.session_length)
+                ]
+            else:
+                futures = [
+                    executor.submit(run_request, i, run_args, prompts[(i - 1) % len(prompts)], modalities, run_id)
+                    for i in range(1, iterations + 1)
+                ]
             results = [None] * iterations
             for future in as_completed(futures):
-                result = future.result()
-                results[result["iteration"] - 1] = result
+                batch = future.result() if args.session_length else [future.result()]
+                for result in batch:
+                    results[result["iteration"] - 1] = result
     except BaseException:
         if collector:
             collector.close()
@@ -626,6 +744,8 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     }
     if score_summary is not None:
         run["epp_scores"] = score_summary
+    if args.session_length:
+        run["session_replay"] = summarize_sessions(args, results, concurrency)
     return run
 
 
@@ -675,6 +795,10 @@ def print_run_report(run, args, modalities):
     if "epp_scores" in run:
         print_section("EPP scoring")
         print_score_summary(run["epp_scores"])
+
+    if "session_replay" in run:
+        print_section("Session replay")
+        print_session_summary(run["session_replay"])
 
     if len(counts) > 1:
         print_section("Latency by pod (valid responses)")
@@ -766,6 +890,8 @@ def print_suite_report(runs, args, modalities):
         print(f"     Pods: {route}")
         if "epp_scores" in run:
             print_score_summary(run["epp_scores"])
+        if "session_replay" in run:
+            print_session_summary(run["session_replay"])
         if run["_failures"] or run["_missing"]:
             print(f"     Issues: use --debug or --output-json for request details")
     print_section("Notes")
@@ -804,6 +930,8 @@ def main():
     parser.add_argument("--no-usage", action="store_true", help="Omit stream_options.include_usage.")
     parser.add_argument("--iterations", "-n", type=int, default=10, help="Total requests for a single run or default suite run.")
     parser.add_argument("--concurrency", "-c", type=int, default=1, help="Maximum simultaneous requests per run.")
+    parser.add_argument("--session-length", type=int, default=0, metavar="N", help="Group requests into sessions of up to N requests (N >= 2); replay each session's token. Requests within a session are sequential; --concurrency limits concurrent sessions. Default: independent requests.")
+    parser.add_argument("--session-header", default="x-session-token", help="Request/response header used for token replay (default: x-session-token).")
     parser.add_argument("--run", action="append", default=[], metavar="NxC", help="Run setting, e.g. 10x1; repeat to benchmark each selected profile at several loads.")
     parser.add_argument("--suite", action="store_true", help="Run every profile in the built-in profile/scorer map.")
     parser.add_argument("--profiles", help="Comma-separated subset of built-in profiles to run.")
@@ -839,6 +967,14 @@ def main():
         parser.error("iterations and concurrency must be positive; timeout must be positive; gateway-wait cannot be negative")
     if not math.isfinite(args.epp_wait) or args.epp_wait < 0:
         parser.error("--epp-wait must be finite and nonnegative")
+    if args.session_length < 0 or args.session_length == 1:
+        parser.error("--session-length must be 0 (disabled) or at least 2")
+    if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", args.session_header):
+        parser.error("--session-header must be a valid HTTP header name")
+    if args.session_header.lower() in {
+        "authorization", "content-type", "accept", "user-agent", "x-request-id", "epp-profile", "host",
+    }:
+        parser.error("--session-header cannot replace a header already used by the benchmark")
     if args.profile is not None and (not args.profile.strip() or "\r" in args.profile or "\n" in args.profile):
         parser.error("--profile must be a nonempty profile name without line breaks")
     plan, suite_mode = suite_plan(args, parser)

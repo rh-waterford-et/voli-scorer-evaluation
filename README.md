@@ -246,6 +246,21 @@ python scripts/stream_metrics.py \
 - `--debug`: display per-request score tables.
 - `--output-json`: save results, including scores, to a JSON file.
 
+## Session-affinity testing
+
+```bash
+python scripts/stream_metrics.py \
+  --endpoint /v1/audio/speech --model qwen3-tts \
+  --profile sessionAffinityProfile \
+  --iterations 30 --concurrency 2 --session-length 5 \
+  --epp-scores --debug --output-json /tmp/tts_sessions.json
+```
+
+- `--session-length N`: replay `x-session-token` within each group of up to N requests. The example runs six sessions, up to two concurrently, with five sequential requests each. The last session may be shorter.
+- `--session-header NAME`: override the token header if EPP uses a different name.
+
+Reports and JSON include token coverage, pod continuity, and separate latency results for initial and replayed requests. Use the same session settings when comparing profiles.
+
 ## Create a Mardown report
 
 The stream_metrics.py script creates a json file for reference.
