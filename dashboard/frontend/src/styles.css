@@ -454,3 +454,80 @@ button.link {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   text-align: left;
 }
+
+/* -- profile builder ------------------------------------------------------------ */
+
+.diff {
+  max-height: 460px;
+}
+
+.diff .add {
+  color: #7ee08a;
+}
+
+.diff .del {
+  color: #ff9a8a;
+}
+
+.diff .hunk {
+  color: #8ab4d8;
+}
+
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+
+.steps li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+}
+
+.step-status {
+  width: 18px;
+  display: inline-block;
+  text-align: center;
+  font-weight: 700;
+}
+
+.step-pending {
+  color: var(--muted);
+}
+
+.step-running {
+  color: var(--accent);
+}
+
+.step-done {
+  color: var(--ok);
+}
+
+.step-failed {
+  color: var(--bad);
+}
+
+.confirm-box {
+  border: 1px solid var(--warn);
+  background: #fffbf0;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+
+.button-link {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+}
+
+.button-link:hover {
+  background: #0057ad;
+  text-decoration: none;
+}

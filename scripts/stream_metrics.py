@@ -27,36 +27,31 @@ import uuid
 from epp_scores import EppScoreCollector, print_request_scores, print_score_summary
 
 
-# Profiles in the current vllm-omni-validation EPP tts.yaml. Keep this map in
-# step with that ConfigMap if the deployment's profile names change.
-PROFILE_SCORERS = {
-    "activeRequestProfile": "active-request-scorer",
-    "loadAwareProfile": "load-aware-scorer",
-    "runningRequestSizeProfile": "running-requests-size-scorer",
-    "queueProfile": "queue-scorer",
-    "tokenLoadProfile": "token-load-scorer",
-    "kvCacheUtilizationProfile": "kv-cache-utilization-scorer",
-    "endpointAttributeProfile": "endpoint-attribute-scorer",
-    "endpointAttributeWeightProfile": "endpoint-attribute-weight-scorer",
-    "contextLengthProfile": "context-length-aware",
-    "prefixCacheProfile": "prefix-cache-scorer",
-    "noHitLruProfile": "no-hit-lru-scorer",
-    "latencyProfile": "latency-scorer",
-    "sessionAffinityProfile": "session-affinity-scorer",
-    "mmEmbeddingsCacheProfile": "mm-embeddings-cache-scorer",
-    "loraAffinityProfile": "lora-affinity-scorer",
-    "headerLabelAffinityProfile": "header-label-affinity-scorer",
-    "topologyAffinityProfile": "topology-affinity-scorer",
-    "queueRunningProfile": "queue-scorer (2) + running-requests-size-scorer (1)",
-    "activeQueueProfile": "active-request-scorer (2) + queue-scorer (1)",
-    "activeRunningProfile": "active-request-scorer (2) + running-requests-size-scorer (1)",
-    "kvacheQueueDepthProfile": "kv-cache-utilization-scorer (2) + queue-scorer (1)",
-    "activeSessionProfile": "active-request-scorer (2) + session-affinity-scorer (1)",
-    "queueSessionProfile": "queue-scorer (2) + session-affinity-scorer (1)",
-    "sessionActiveProfile": "session-affinity-scorer (2) + active-request-scorer (1)",
-    "sessionQueueProfile": "session-affinity-scorer (2) + queue-scorer (1)",
-    "sessionActiveQueueProfile": "session-affinity-scorer (2) + active-request-scorer (2) + queue-scorer (1)"
-}
+# The profile -> scorer map lives in JSON files next to this script:
+#   profile_scorers.json        tracked default; safe to hand-edit upstream
+#   profile_scorers_local.json  gitignored; written by the dashboard to mirror
+#                               the live EPP ConfigMap (takes precedence)
+# This keeps --list-profiles, suite validation, and result scorer labels in
+# step with the live configuration without churning the repository.
+def load_profile_scorers():
+    for filename in ("profile_scorers_local.json", "profile_scorers.json"):
+        path = Path(__file__).resolve().parent / filename
+        if not path.is_file():
+            continue
+        try:
+            document = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(document, dict):
+            profiles = document.get("profiles", document)
+            if isinstance(profiles, dict) and profiles:
+                return {str(name): str(scorer) for name, scorer in profiles.items()}
+    raise SystemExit(
+        "cannot load the profile map: scripts/profile_scorers.json is missing or invalid"
+    )
+
+
+PROFILE_SCORERS = load_profile_scorers()
 
 
 ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech")

@@ -11,6 +11,9 @@ export default function App() {
         <NavLink to="/new" className={({ isActive }) => (isActive ? 'active' : '')}>
           New Run
         </NavLink>
+        <NavLink to="/builder" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Builder
+        </NavLink>
         <NavLink to="/compare" className={({ isActive }) => (isActive ? 'active' : '')}>
           Compare
         </NavLink>

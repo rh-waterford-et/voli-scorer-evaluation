@@ -8,3 +8,6 @@ dashboard/.venv/
 dashboard/data/
 dashboard/frontend/node_modules/
 dashboard/frontend/dist/
+
+# Locally synced profile map (written by the dashboard from the live cluster)
+scripts/profile_scorers_local.json

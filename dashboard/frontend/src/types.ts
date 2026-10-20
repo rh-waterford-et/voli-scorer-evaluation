@@ -195,7 +195,102 @@ export interface ClusterProfiles {
   profiles: ProfileInfo[]
 }
 
+export interface ProfileListResponse {
+  source: string
+  map_source: 'local' | 'default'
+  map_synced_at: string | null
+  map_sync_source: string | null
+  map_profiles: number | null
+  profiles: ProfileInfo[]
+}
+
 export interface RunEvent {
   kind: string
   data: any
+}
+
+// -- profile builder ------------------------------------------------------------
+
+export interface BuilderInstance {
+  name: string
+  type: string
+  kind: 'scorer' | 'picker' | 'other'
+  has_parameters: boolean
+}
+
+export interface BuilderScorerRef {
+  name: string
+  weight: number | null
+}
+
+export interface BuilderProfile {
+  name: string
+  scorers: BuilderScorerRef[]
+  others: BuilderScorerRef[]
+  picker: string | null
+}
+
+export interface BuilderState {
+  namespace: string
+  epp_deployment: string
+  configmap: string
+  config_key: string
+  resource_version: string | null
+  api_version: string
+  default_profile: string | null
+  helm_managed: boolean
+  picker_default: string | null
+  instances: BuilderInstance[]
+  profiles: BuilderProfile[]
+  warnings: string[]
+}
+
+export interface BuilderOperationIn {
+  action: 'create' | 'edit' | 'delete'
+  profile: string
+  scorers: { name: string; weight: number }[]
+  picker?: string | null
+}
+
+export interface BuilderPreview {
+  ok: boolean
+  errors: string[]
+  warnings: string[]
+  resource_version: string | null
+  diff: string
+  new_text: string
+  picker: string | null
+  configmap: string
+  config_key: string
+  summary: string
+}
+
+export interface BuilderJobStep {
+  key: string
+  label: string
+  status: string
+  detail: string | null
+}
+
+export interface BuilderJob {
+  id: string
+  kind: 'apply' | 'revert'
+  status: string
+  error: string | null
+  summary: string
+  created_at: string
+  steps: BuilderJobStep[]
+  backup_id: string | null
+  revert_available: boolean
+}
+
+export interface BuilderBackup {
+  id: string
+  created_at: string
+  namespace: string
+  epp_deployment: string
+  configmap: string
+  config_key: string
+  resource_version: string | null
+  operation: string
 }

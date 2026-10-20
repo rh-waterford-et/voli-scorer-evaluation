@@ -13,11 +13,11 @@ schedulingProfile with its scorers, weights, filters, and picker.
 """
 
 import json
-import subprocess
 import sys
 
 from fastapi import HTTPException
 
+import oc
 from paths import SCRIPTS_DIR
 
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -26,7 +26,7 @@ import epp_scores  # noqa: E402  (repository script, reused read-only)
 
 
 def builtin_profiles() -> list[dict]:
-    from stream_metrics import PROFILE_SCORERS
+    from stream_metrics import load_profile_scorers
 
     profiles = [
         {
@@ -36,7 +36,8 @@ def builtin_profiles() -> list[dict]:
             "filters": [],
             "pickers": [],
         }
-        for name, scorer in PROFILE_SCORERS.items()
+        for name, scorer in load_profile_scorers().items()
+        if name != "default"
     ]
     # "default" is special in the benchmark script's single-profile mode: it
     # sends no EPP-Profile header, so EPP applies its own configured default
@@ -54,27 +55,49 @@ def builtin_profiles() -> list[dict]:
     return profiles
 
 
+def map_source_info() -> dict:
+    """Which profile map file stream_metrics.py will use right now."""
+    local = SCRIPTS_DIR / "profile_scorers_local.json"
+    if local.is_file():
+        try:
+            document = json.loads(local.read_text())
+            profiles = document.get("profiles") or {}
+            return {
+                "map_source": "local",
+                "map_synced_at": document.get("synced_at"),
+                "map_sync_source": document.get("source"),
+                "map_profiles": len(profiles),
+            }
+        except (OSError, ValueError):
+            pass
+    return {
+        "map_source": "default",
+        "map_synced_at": None,
+        "map_sync_source": "tracked default: scripts/profile_scorers.json",
+        "map_profiles": None,
+    }
+
+
 def _oc_json(args: list[str], timeout: float = 25.0) -> dict:
-    completed = subprocess.run(
-        ["oc", *args], capture_output=True, text=True, timeout=timeout, check=False
-    )
-    if completed.returncode:
-        detail = completed.stderr.strip()[:400] or f"oc exited {completed.returncode}"
-        raise HTTPException(status_code=502, detail=f"oc {' '.join(args[:4])} failed: {detail}")
+    # Goes through oc.oc_json so VOLI_OC_CMD (offline testing) applies here too.
     try:
-        return json.loads(completed.stdout)
-    except json.JSONDecodeError as error:
-        raise HTTPException(status_code=502, detail=f"oc output was not JSON: {error}") from error
+        return oc.oc_json(args, timeout)
+    except oc.OcError as error:
+        raise HTTPException(status_code=502, detail=str(error))
 
 
-def discover_profiles(
+def fetch_config(
     namespace: str,
     epp_deployment: str,
     epp_container: str,
     configmap: str | None = None,
     config_key: str | None = None,
 ) -> dict:
-    """Read-only discovery of every scheduling profile in the live EPP config."""
+    """Read-only: locate the EPP plugin ConfigMap and fetch its content.
+
+    Returns the deployment/configmap JSON, the resolved ConfigMap name and
+    data key, the raw config text, and the ConfigMap resourceVersion.
+    """
     deployment = _oc_json(["get", "deployment", epp_deployment, "-n", namespace, "-o", "json"])
     try:
         containers = deployment["spec"]["template"]["spec"]["containers"]
@@ -95,6 +118,30 @@ def discover_profiles(
         raise HTTPException(
             status_code=502, detail=f"configmap {name} has no data key {key!r}"
         )
+    resource_version = (configmap_json.get("metadata") or {}).get("resourceVersion")
+    return {
+        "deployment": deployment,
+        "configmap": configmap_json,
+        "configmap_name": name,
+        "config_key": key,
+        "text": text,
+        "resource_version": str(resource_version) if resource_version is not None else None,
+    }
+
+
+def discover_profiles(
+    namespace: str,
+    epp_deployment: str,
+    epp_container: str,
+    configmap: str | None = None,
+    config_key: str | None = None,
+) -> dict:
+    """Read-only discovery of every scheduling profile in the live EPP config."""
+    fetched = fetch_config(namespace, epp_deployment, epp_container, configmap, config_key)
+    text = fetched["text"]
+    configmap_json = fetched["configmap"]
+    name = fetched["configmap_name"]
+    key = fetched["config_key"]
 
     try:
         import yaml

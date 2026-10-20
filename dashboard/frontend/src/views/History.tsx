@@ -41,7 +41,12 @@ export default function History() {
   }
 
   const remove = async (id: string) => {
-    if (!window.confirm(`Delete run ${id} and its stored results?`)) return
+    const isReport = id.startsWith('report:')
+    const message = isReport
+      ? `Delete the repository report reports/${id.slice('report:'.length)}.json?\n\n` +
+        'This removes the committed file from the working tree. Commit the deletion to make it permanent; until then it is recoverable with git.'
+      : `Delete run ${id} and its stored results?`
+    if (!window.confirm(message)) return
     try {
       await api.remove(id)
       setSelected((previous) => {
@@ -53,6 +58,27 @@ export default function History() {
     } catch (cause) {
       setError(String(cause))
     }
+  }
+
+  const removeSelected = async () => {
+    const ids = Array.from(selected)
+    if (!ids.length) return
+    const reports = ids.filter((id) => id.startsWith('report:')).length
+    const runs = ids.length - reports
+    const parts = [
+      runs ? `${runs} dashboard run${runs > 1 ? 's' : ''} (with stored results)` : '',
+      reports
+        ? `${reports} repository report${reports > 1 ? 's' : ''} (file removed from the working tree — commit to make permanent)`
+        : '',
+    ].filter(Boolean)
+    if (!window.confirm(`Delete ${parts.join(' and ')}?`)) return
+    const results = await Promise.allSettled(ids.map((id) => api.remove(id)))
+    const failures = results
+      .map((result, index) => (result.status === 'rejected' ? `${ids[index]}: ${result.reason}` : null))
+      .filter((value): value is string => value != null)
+    if (failures.length) setError(failures.join('\n'))
+    setSelected(new Set())
+    load()
   }
 
   const columns: Column<RunMeta>[] = [
@@ -136,16 +162,19 @@ export default function History() {
     {
       key: 'actions',
       label: '',
-      render: (row) =>
-        row.source === 'dashboard' ? (
-          <button className="link" onClick={() => remove(row.id)} title="Delete run">
-            delete
-          </button>
-        ) : (
-          <span className="muted" title="Repository reports are read-only">
-            read-only
-          </span>
-        ),
+      render: (row) => (
+        <button
+          className="link"
+          onClick={() => remove(row.id)}
+          title={
+            row.source === 'report'
+              ? 'Delete reports/' + row.id.slice('report:'.length) + '.json from the working tree (commit to make permanent)'
+              : 'Delete this run and its stored results'
+          }
+        >
+          delete
+        </button>
+      ),
     },
   ]
 
@@ -163,6 +192,14 @@ export default function History() {
           >
             Compare selected ({selected.size})
           </button>
+          <button
+            className="danger"
+            disabled={!selected.size}
+            title="Delete all selected entries. Dashboard runs remove their stored results; repository reports are removed from the working tree (commit to make permanent)."
+            onClick={removeSelected}
+          >
+            Delete selected ({selected.size})
+          </button>
         </div>
       </div>
       {error && <div className="error-text">{error}</div>}
@@ -178,7 +215,8 @@ export default function History() {
       </div>
       <p className="muted">
         Runs with source <span className="chip">report</span> are JSON files committed under{' '}
-        <code>reports/</code>, shown read-only.
+        <code>reports/</code>. Deleting one removes the file from the working tree — commit the
+        deletion to make it permanent.
       </p>
     </div>
   )

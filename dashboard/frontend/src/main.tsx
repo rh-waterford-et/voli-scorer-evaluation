@@ -6,6 +6,7 @@ import History from './views/History'
 import NewRun from './views/NewRun'
 import RunView from './views/RunView'
 import Compare from './views/Compare'
+import Builder from './views/Builder'
 import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -16,6 +17,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route index element={<Navigate to="/history" replace />} />
           <Route path="history" element={<History />} />
           <Route path="new" element={<NewRun />} />
+          <Route path="builder" element={<Builder />} />
           <Route path="runs/:id" element={<RunView />} />
           <Route path="compare" element={<Compare />} />
         </Route>

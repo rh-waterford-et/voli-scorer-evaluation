@@ -113,7 +113,7 @@ All scorers implement scheduling.Scorer (Score() \-\> map\[Endpoint\]float64). E
 
 ## **Test Suite Scripts**
 
-Use `scripts/stream_metrics.py` to send streaming requests through the inference Gateway, compare EPP scheduling profiles, and record client-observed latency and backend routing. The script lives at `~/Projects/red-hat/voli_scorers/stream_metrics.py`; its built-in map currently names 14 profiles and their scorers. Check `--list-profiles` before a run because that map must match the live EPP configuration.
+Use `scripts/stream_metrics.py` to send streaming requests through the inference Gateway, compare EPP scheduling profiles, and record client-observed latency and backend routing. The profile → scorer map lives in `scripts/profile_scorers.json` (tracked default). The dashboard's Builder can mirror the live EPP ConfigMap into a local, gitignored `scripts/profile_scorers_local.json`, which takes precedence when present — after a sync, `--list-profiles`, suite validation, and result scorer labels match the cluster without any repo churn. Run `--list-profiles` to see the active map.
 
 ## Before you start
 

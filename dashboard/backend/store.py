@@ -237,6 +237,22 @@ class RunStore:
         path = REPORTS_DIR / f"{safe_profile_name(stem)}.json"
         return self._load_report_document(path)
 
+    def delete_report(self, stem: str) -> bool:
+        """Remove a committed report file from the working tree.
+
+        The sanitization and parent check keep this inside reports/. The
+        deletion is a working-tree change until committed, so it is
+        recoverable via git until then.
+        """
+        path = REPORTS_DIR / f"{safe_profile_name(stem)}.json"
+        if not path.is_file():
+            return False
+        resolved = path.resolve()
+        if resolved.parent != REPORTS_DIR.resolve():
+            return False
+        resolved.unlink()
+        return True
+
     def _load_report_document(self, path: Path) -> Optional[dict]:
         try:
             document = json.loads(path.read_text())

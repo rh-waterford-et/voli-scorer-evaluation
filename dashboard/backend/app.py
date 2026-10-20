@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from pydantic import BaseModel
 
 import bench
+import builder
 import cluster
 import runner
 from paths import FRONTEND_DIST
@@ -25,6 +26,7 @@ from store import RunStore, normalize_output, summarize_output
 app = FastAPI(title="VOLI scorer-evaluation dashboard")
 store = RunStore()
 manager = runner.RunManager(store)
+builder_manager = builder.BuilderManager()
 store.mark_interrupted_on_startup()
 
 
@@ -46,8 +48,12 @@ def health():
 
 @app.get("/api/profiles")
 def profiles():
-    """Built-in profile map from scripts/stream_metrics.py. No cluster access."""
-    return {"source": "builtin", "profiles": cluster.builtin_profiles()}
+    """Script profile map (local synced file if present, else tracked default)."""
+    return {
+        "source": "builtin",
+        **cluster.map_source_info(),
+        "profiles": cluster.builtin_profiles(),
+    }
 
 
 @app.get("/api/profiles/cluster")
@@ -60,6 +66,101 @@ def profiles_cluster(
 ):
     """Live EPP scheduling profiles. Read-only: `oc get deployment/configmap`."""
     return cluster.discover_profiles(namespace, epp_deployment, epp_container, configmap, config_key)
+
+
+# -- profile builder --------------------------------------------------------------
+
+
+@app.get("/api/builder/state")
+def builder_state(
+    namespace: str = "vllm-omni-validation",
+    epp_deployment: str = "endpoint-picker-epp",
+    epp_container: str = "epp",
+    configmap: Optional[str] = None,
+    config_key: Optional[str] = None,
+):
+    """Live config for the builder: instances, profiles, picker, warnings. Read-only."""
+    fetched = cluster.fetch_config(namespace, epp_deployment, epp_container, configmap, config_key)
+    state = builder.build_state(fetched)
+    state["namespace"] = namespace
+    state["epp_deployment"] = epp_deployment
+    return state
+
+
+@app.post("/api/builder/preview")
+def builder_preview(request: builder.BuilderRequest):
+    """Validate an operation and return the diff. No cluster change."""
+    return builder.preview_operation(request)
+
+
+@app.post("/api/builder/apply")
+def builder_apply(request: builder.BuilderRequest):
+    """Apply an operation: backup -> patch ConfigMap -> restart EPP -> verify."""
+    preview = builder.preview_operation(request)
+    if not preview["ok"]:
+        raise HTTPException(status_code=400, detail="; ".join(preview["errors"]))
+    job_id = builder_manager.start_apply(request)
+    return {"job_id": job_id}
+
+
+@app.get("/api/builder/jobs")
+def builder_jobs():
+    return builder_manager.list_jobs()
+
+
+@app.get("/api/builder/jobs/{job_id}")
+def builder_job(job_id: str):
+    view = builder_manager.get_job(job_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    return view
+
+
+@app.get("/api/builder/backups")
+def builder_backups():
+    return builder.list_backups()
+
+
+@app.post("/api/builder/revert")
+def builder_revert(request: builder.RevertRequest):
+    """Restore a saved backup (itself going through the full apply chain)."""
+    job_id = builder_manager.start_revert(request.backup_id)
+    return {"job_id": job_id}
+
+
+@app.get("/api/builder/live-yaml")
+def builder_live_yaml(
+    namespace: str = "vllm-omni-validation",
+    epp_deployment: str = "endpoint-picker-epp",
+    epp_container: str = "epp",
+    configmap: Optional[str] = None,
+    config_key: Optional[str] = None,
+):
+    """Raw live plugin YAML (read-only), e.g. for syncing Helm values."""
+    fetched = cluster.fetch_config(namespace, epp_deployment, epp_container, configmap, config_key)
+    return {
+        "text": fetched["text"],
+        "configmap": fetched["configmap_name"],
+        "config_key": fetched["config_key"],
+        "resource_version": fetched["resource_version"],
+    }
+
+
+@app.post("/api/builder/sync-map")
+def builder_sync_map(request: builder.SyncMapRequest):
+    """Mirror the live scheduling profiles into the script's local profile map."""
+    fetched = cluster.fetch_config(
+        request.namespace, request.epp_deployment, request.epp_container,
+        request.configmap, request.config_key,
+    )
+    state = builder.build_state(fetched)
+    document = builder.sync_profile_map(state, request.namespace)
+    return {
+        "synced": len(document["profiles"]),
+        "synced_at": document["synced_at"],
+        "source": document["source"],
+        "file": builder.SCRIPT_MAP_LOCAL.name,
+    }
 
 
 # -- runs ----------------------------------------------------------------------
@@ -195,7 +296,11 @@ def cancel_run(run_id: str):
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
     if run_id.startswith("report:"):
-        raise HTTPException(status_code=400, detail="reports are read-only repository files")
+        # Deletes the committed file from the working tree; committing the
+        # removal makes it permanent.
+        if not store.delete_report(run_id[len("report:"):]):
+            raise HTTPException(status_code=404, detail="report not found")
+        return {"status": "deleted"}
     live = manager.get(run_id)
     if live is not None and live.status in runner.ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail="cancel the run before deleting it")

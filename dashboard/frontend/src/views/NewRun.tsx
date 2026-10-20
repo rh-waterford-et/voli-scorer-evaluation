@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import HelpHint from '../components/HelpHint'
 import type { ClusterProfiles, ProfileInfo } from '../types'
@@ -30,6 +30,7 @@ function profileSubText(profile: ProfileInfo): string {
 
 export default function NewRun() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [name, setName] = useState('')
   const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions'>('/v1/audio/speech')
@@ -40,6 +41,12 @@ export default function NewRun() {
   const [eppContainer, setEppContainer] = useState(DEFAULTS.eppContainer)
 
   const [profileInfos, setProfileInfos] = useState<ProfileInfo[]>([])
+  const [mapInfo, setMapInfo] = useState<{
+    map_source: 'local' | 'default'
+    map_synced_at: string | null
+    map_sync_source: string | null
+    map_profiles: number | null
+  } | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [clusterInfo, setClusterInfo] = useState<ClusterProfiles | null>(null)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
@@ -74,9 +81,18 @@ export default function NewRun() {
   useEffect(() => {
     api
       .builtinProfiles()
-      .then((result) => setProfileInfos(result.profiles))
+      .then((result) => {
+        setProfileInfos(result.profiles)
+        setMapInfo(result)
+      })
       .catch((cause) => setProfileError(String(cause)))
   }, [])
+
+  // Deep link from the Builder: /new?profile=<name> preselects that profile.
+  useEffect(() => {
+    const preset = searchParams.get('profile')
+    if (preset) setSelectedProfiles(new Set([preset]))
+  }, [searchParams])
 
   const loadFromCluster = async () => {
     setLoadingProfiles(true)
@@ -262,10 +278,28 @@ export default function NewRun() {
       <div className="panel">
         <h2>Profiles</h2>
         <p className="muted">
-          Built-in list comes from the script's PROFILE_SCORERS map. "Load from cluster"
-          reads the live EPP ConfigMap instead (read-only <code>oc get</code>), which also
-          shows combined profiles and weights that are not in the built-in map.
+          This list comes from the script's profile map, which the{' '}
+          <Link to="/builder">Builder</Link> keeps synced with the live EPP config (into a
+          local, gitignored file) — profiles created or edited there appear here after a sync.
+          "Load from cluster" reads the live ConfigMap directly (read-only <code>oc get</code>)
+          and also shows per-profile weights and pickers.
         </p>
+        {mapInfo && (
+          <p className="muted" style={{ marginTop: -6 }}>
+            {mapInfo.map_source === 'local' ? (
+              <>
+                Script map: <span className="chip">synced</span>{' '}
+                {mapInfo.map_synced_at ? new Date(mapInfo.map_synced_at).toLocaleString() : ''}{' '}
+                from {mapInfo.map_sync_source} ({mapInfo.map_profiles} profiles)
+              </>
+            ) : (
+              <>
+                Script map: <span className="chip">tracked default</span> not synced with the
+                cluster yet — sync it from the Builder to mirror the live profiles.
+              </>
+            )}
+          </p>
+        )}
         <div className="form-grid">
           <div>
             <label>Filter</label>

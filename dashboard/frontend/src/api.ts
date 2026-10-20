@@ -1,6 +1,12 @@
 import type {
+  BuilderBackup,
+  BuilderJob,
+  BuilderPreview,
+  BuilderProfile,
+  BuilderState,
   ClusterProfiles,
   ProfileInfo,
+  ProfileListResponse,
   RunDetail,
   RunMeta,
 } from './types'
@@ -69,7 +75,7 @@ export const api = {
   previewRun: (body: { name?: string | null; params: unknown }) =>
     postJSON<{ run_id: string; profiles: { name: string; argv: string[] }[] }>('/api/runs/preview', body),
 
-  builtinProfiles: () => getJSON<{ source: string; profiles: ProfileInfo[] }>('/api/profiles'),
+  builtinProfiles: () => getJSON<ProfileListResponse>('/api/profiles'),
 
   clusterProfiles: (query: {
     namespace: string
@@ -82,6 +88,45 @@ export const api = {
       epp_container: query.epp_container,
     })
     return getJSON<ClusterProfiles>(`/api/profiles/cluster?${params.toString()}`)
+  },
+
+  builderState: (query: { namespace: string; epp_deployment: string; epp_container: string }) => {
+    const params = new URLSearchParams({
+      namespace: query.namespace,
+      epp_deployment: query.epp_deployment,
+      epp_container: query.epp_container,
+    })
+    return getJSON<BuilderState>(`/api/builder/state?${params.toString()}`)
+  },
+
+  builderPreview: (body: unknown) =>
+    postJSON<BuilderPreview>('/api/builder/preview', body),
+
+  builderApply: (body: unknown) =>
+    postJSON<{ job_id: string }>('/api/builder/apply', body),
+
+  builderJob: (id: string) => getJSON<BuilderJob>(`/api/builder/jobs/${encodeURIComponent(id)}`),
+
+  builderBackups: () => getJSON<BuilderBackup[]>('/api/builder/backups'),
+
+  builderRevert: (backupId: string) =>
+    postJSON<{ job_id: string }>('/api/builder/revert', { backup_id: backupId }),
+
+  builderSyncMap: (query: { namespace: string; epp_deployment: string; epp_container: string }) =>
+    postJSON<{ synced: number; synced_at: string; source: string; file: string }>(
+      '/api/builder/sync-map',
+      query,
+    ),
+
+  builderLiveYaml: (query: { namespace: string; epp_deployment: string; epp_container: string }) => {
+    const params = new URLSearchParams({
+      namespace: query.namespace,
+      epp_deployment: query.epp_deployment,
+      epp_container: query.epp_container,
+    })
+    return getJSON<{ text: string; configmap: string; config_key: string; resource_version: string | null }>(
+      `/api/builder/live-yaml?${params.toString()}`,
+    )
   },
 }
 
