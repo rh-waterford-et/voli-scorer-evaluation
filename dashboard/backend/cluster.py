@@ -28,7 +28,7 @@ import epp_scores  # noqa: E402  (repository script, reused read-only)
 def builtin_profiles() -> list[dict]:
     from stream_metrics import PROFILE_SCORERS
 
-    return [
+    profiles = [
         {
             "name": name,
             "source": "builtin",
@@ -38,6 +38,20 @@ def builtin_profiles() -> list[dict]:
         }
         for name, scorer in PROFILE_SCORERS.items()
     ]
+    # "default" is special in the benchmark script's single-profile mode: it
+    # sends no EPP-Profile header, so EPP applies its own configured default
+    # profile. Offer it as an explicit opt-in; the UI lists it last with a
+    # label that makes the no-header behavior clear.
+    profiles.append(
+        {
+            "name": "default",
+            "source": "builtin",
+            "scorers": [],
+            "filters": [],
+            "pickers": [],
+        }
+    )
+    return profiles
 
 
 def _oc_json(args: list[str], timeout: float = 25.0) -> dict:

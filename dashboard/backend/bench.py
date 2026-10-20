@@ -29,7 +29,9 @@ class RunParams(BaseModel):
     endpoint: Literal["/v1/chat/completions", "/v1/audio/speech"] = "/v1/audio/speech"
     model: str = Field(default="qwen3-tts", min_length=1)
     url: str = Field(default="http://10.6.62.51:31670", min_length=1)
-    profiles: list[str] = Field(default_factory=lambda: ["default"], min_length=1)
+    # Required: the caller picks profiles explicitly. "default" is a valid
+    # choice (it sends no EPP-Profile header), but it is never implied.
+    profiles: list[str] = Field(min_length=1)
     runs: list[LoadSetting] = Field(default_factory=lambda: [LoadSetting()], min_length=1)
 
     prompt: Optional[str] = None

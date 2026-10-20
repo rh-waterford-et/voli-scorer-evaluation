@@ -13,7 +13,7 @@ the benchmark as a subprocess.
 
 | Area | Details |
 |---|---|
-| New run | Select profiles (built-in map or live cluster ConfigMap), load settings (`--run NxC`), prompts, and common flags. "Show command" previews the exact command lines. |
+| New run | Select profiles (built-in map or live cluster ConfigMap), load settings (`--run NxC`), prompts, and common flags. "Show command" previews the exact command lines. Nothing is pre-selected; `default` (no `EPP-Profile` header → cluster's default profile) is an explicit opt-in listed last. |
 | Live progress | Per-profile status, the script's progress lines, and the full stdout/stderr log stream (SSE). Cancel mid-run. |
 | Results | Sortable table per profile × load (TTFA/TTFT/TPOT/E2E, mean/p50/p99), expandable to full metrics, pod routing distribution, and per-request details including raw EPP scores, weighted contributions, and picker selection. |
 | Charts | p50/p99 comparison bars across profile-runs; latency histograms per run. |

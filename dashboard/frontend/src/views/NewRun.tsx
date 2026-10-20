@@ -15,6 +15,18 @@ const DEFAULTS = {
   eppContainer: 'epp',
 }
 
+function profileSubText(profile: ProfileInfo): string {
+  const scorerText = profile.scorers
+    .map((s) => `${s.type}${s.weight != null ? ` (${s.weight})` : ''}`)
+    .join(' + ')
+  if (profile.name === 'default') {
+    return `sends no EPP-Profile header — cluster's default profile${
+      scorerText ? ` (${scorerText})` : ''
+    }`
+  }
+  return scorerText || 'no scorers'
+}
+
 export default function NewRun() {
   const navigate = useNavigate()
 
@@ -31,7 +43,7 @@ export default function NewRun() {
   const [clusterInfo, setClusterInfo] = useState<ClusterProfiles | null>(null)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [profileSearch, setProfileSearch] = useState('')
-  const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(new Set(['default']))
+  const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(new Set())
 
   const [loads, setLoads] = useState<Load[]>([{ iterations: 10, concurrency: 1 }])
 
@@ -85,11 +97,16 @@ export default function NewRun() {
 
   const visibleProfiles = useMemo(() => {
     const needle = profileSearch.trim().toLowerCase()
-    if (!needle) return profileInfos
-    return profileInfos.filter(
-      (profile) =>
-        profile.name.toLowerCase().includes(needle) ||
-        profile.scorers.some((scorer) => scorer.type.toLowerCase().includes(needle)),
+    const filtered = needle
+      ? profileInfos.filter(
+          (profile) =>
+            profile.name.toLowerCase().includes(needle) ||
+            profile.scorers.some((scorer) => scorer.type.toLowerCase().includes(needle)),
+        )
+      : profileInfos
+    // Keep the source order, but list the no-header "default" entry last.
+    return [...filtered].sort(
+      (a, b) => (a.name === 'default' ? 1 : 0) - (b.name === 'default' ? 1 : 0),
     )
   }, [profileInfos, profileSearch])
 
@@ -271,12 +288,10 @@ export default function NewRun() {
                 checked={selectedProfiles.has(profile.name)}
                 onChange={() => toggleProfile(profile.name)}
               />
-              <span className="mono">{profile.name}</span>
-              <span className="muted profile-scorers">
-                {profile.scorers
-                  .map((s) => `${s.type}${s.weight != null ? ` (${s.weight})` : ''}`)
-                  .join(' + ') || 'no scorers'}
+              <span className={`mono${profile.name === 'default' ? ' muted' : ''}`}>
+                {profile.name}
               </span>
+              <span className="muted profile-scorers">{profileSubText(profile)}</span>
             </label>
           ))}
           {!visibleProfiles.length && <div className="muted">No profiles match.</div>}
