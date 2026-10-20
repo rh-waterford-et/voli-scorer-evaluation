@@ -47,6 +47,15 @@ PROFILE_SCORERS = {
     "loraAffinityProfile": "lora-affinity-scorer",
     "headerLabelAffinityProfile": "header-label-affinity-scorer",
     "topologyAffinityProfile": "topology-affinity-scorer",
+    "queueRunningProfile": "queue-scorer (2) + running-requests-size-scorer (1)",
+    "activeQueueProfile": "active-request-scorer (2) + queue-scorer (1)",
+    "activeRunningProfile": "active-request-scorer (2) + running-requests-size-scorer (1)",
+    "kvacheQueueDepthProfile": "kv-cache-utilization-scorer (2) + queue-scorer (1)",
+    "activeSessionProfile": "active-request-scorer (2) + session-affinity-scorer (1)",
+    "queueSessionProfile": "queue-scorer (2) + session-affinity-scorer (1)",
+    "sessionActiveProfile": "session-affinity-scorer (2) + active-request-scorer (1)",
+    "sessionQueueProfile": "session-affinity-scorer (2) + queue-scorer (1)",
+    "sessionActiveQueueProfile": "session-affinity-scorer (2) + active-request-scorer (2) + queue-scorer (1)"
 }
 
 
