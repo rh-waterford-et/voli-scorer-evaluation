@@ -2,3 +2,9 @@
 
 __pycache__/
 *.py[cod]
+
+# Dashboard runtime data and tooling
+dashboard/.venv/
+dashboard/data/
+dashboard/frontend/node_modules/
+dashboard/frontend/dist/

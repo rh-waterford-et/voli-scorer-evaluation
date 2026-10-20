@@ -267,6 +267,10 @@ The stream_metrics.py script creates a json file for reference.
 
 use the script `gen_profile_md.py` to create a markdown report for easier viewing and analysis 
 
+## Dashboard
+
+A local web UI for running these benchmark suites and exploring results (profile selection, live progress, sortable/comparable metrics, per-request EPP scores) lives in [`dashboard/`](dashboard/README.md). It wraps `stream_metrics.py` without modifying it; see `dashboard/README.md` for setup and usage.
+
 
 
 
