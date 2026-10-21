@@ -71,10 +71,49 @@ export default function Compare() {
     return run ? run.metrics?.[metric]?.[stat] ?? null : null
   }
 
-  // Latency-like metrics: lower is better.
+  // Confounders that can dominate latency differences between runs. Repository
+  // reports carry no params, so their prompt/session settings count as unknown
+  // and only confirmed differences (two or more distinct known values) warn.
+  const promptOf = (detail: RunDetail): string | null => {
+    if (!detail.params) return null
+    const text = (detail.params.prompts_text ?? '').trim()
+    if (text) return text
+    return (detail.params.prompt ?? '').trim() || '(script default)'
+  }
+  const promptPreview = (value: string) => {
+    const flat = value.replace(/\s+/g, ' ').trim()
+    return flat.length > 64 ? `${flat.slice(0, 61)}…` : flat
+  }
+  const sessionOf = (detail: RunDetail): number | null =>
+    detail.params ? detail.params.session_length ?? 0 : null
+  const modalitiesOf = (detail: RunDetail): string =>
+    (detail.results?.modalities ?? []).join(',') || detail.params?.modalities || '—'
+
+  const models = Array.from(new Set(details.map((d) => d.results?.model ?? d.params?.model ?? '—')))
+  const endpoints = Array.from(
+    new Set(details.map((d) => d.results?.endpoint ?? d.params?.endpoint ?? '—')),
+  )
+  const prompts = Array.from(
+    new Set(details.map(promptOf).filter((value): value is string => value != null)),
+  )
+  const sessions = Array.from(
+    new Set(details.map(sessionOf).filter((value): value is number => value != null)),
+  )
+  const modalities = Array.from(new Set(details.map(modalitiesOf)))
+
+  const mismatched: string[] = []
+  if (models.length > 1) mismatched.push('models')
+  if (endpoints.length > 1) mismatched.push('endpoints')
+  if (prompts.length > 1) mismatched.push('prompts')
+  if (modalities.length > 1) mismatched.push('output modalities')
+  if (sessions.length > 1) mismatched.push(`session settings (lengths ${sessions.join(' vs ')})`)
+  const comparable = mismatched.length === 0
+
+  // Latency-like metrics: lower is better. Winner highlighting is suppressed
+  // while the runs differ in a confounder (prompt, session, model, ...).
   const isLowerBetter = !metric.startsWith('unknown')
   const bestByProfile = new Map<string, number>()
-  if (isLowerBetter) {
+  if (isLowerBetter && comparable) {
     for (const profile of profiles) {
       const values = details
         .map((detail) => cellValue(detail, profile))
@@ -124,21 +163,33 @@ export default function Compare() {
     )
   }
 
-  const models = Array.from(new Set(details.map((d) => d.results?.model ?? d.params?.model ?? '—')))
-  const endpoints = Array.from(
-    new Set(details.map((d) => d.results?.endpoint ?? d.params?.endpoint ?? '—')),
-  )
-
   return (
     <div>
       <div className="page-head">
         <h1>Compare runs</h1>
       </div>
 
-      {(models.length > 1 || endpoints.length > 1) && (
+      {!comparable && (
         <div className="warn-text panel">
-          These runs used different {models.length > 1 ? 'models' : 'endpoints'} — comparisons
-          may not be apples to apples.
+          <strong>Not directly comparable:</strong> the selected runs differ in{' '}
+          {mismatched.join(', ')}. Latency depends heavily on input length, output
+          modalities, and session behavior, so differences may reflect those settings
+          rather than the routing profiles — winner highlighting is disabled.
+          {prompts.length > 1 && (
+            <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+              {prompts.map((prompt) => {
+                const labels = details
+                  .map((detail, index) => (promptOf(detail) === prompt ? shortLabel(detail, index) : null))
+                  .filter((value): value is string => value != null)
+                  .join(', ')
+                return (
+                  <li key={prompt} className="muted">
+                    {labels}: “{promptPreview(prompt)}”
+                  </li>
+                )
+              })}
+            </ul>
+          )}
         </div>
       )}
 
@@ -207,7 +258,15 @@ export default function Compare() {
           </table>
         </div>
         <p className="muted">
-          Highlighted cells are the best (lowest) value for that profile at load {load || '—'}.
+          {comparable ? (
+            <>
+              Highlighted cells are the best (lowest) value for that profile at load {load || '—'}.
+            </>
+          ) : (
+            <>
+              Winner highlighting is disabled because the runs differ in {mismatched.join(', ')}.
+            </>
+          )}{' '}
           Missing cells mean the run has no matching profile/load combination.
         </p>
       </div>
