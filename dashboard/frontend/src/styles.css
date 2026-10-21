@@ -5,10 +5,49 @@
   --text: #1b1f23;
   --muted: #5c6670;
   --accent: #0066cc;
+  --accent-strong: #0057ad;
+  --accent-contrast: #ffffff;
   --accent-soft: #e8f1fb;
+  --chip-text: #15466e;
   --ok: #1e7f32;
+  --ok-soft: #e6f4ea;
   --bad: #b3261e;
+  --bad-soft: #fbe9e7;
   --warn: #9a6700;
+  --warn-soft: #fff3d6;
+  --surface-2: #fbfbfc; /* table headers */
+  --surface-3: #fafbfc; /* expanded rows */
+  --surface-4: #eef1f4; /* code, badges, bar tracks */
+  --hover-bg: #f4f7fa;
+  --input-bg: #ffffff;
+  --button-bg: #ffffff;
+  --confirm-bg: #fffbf0;
+}
+
+:root[data-theme='dark'] {
+  --bg: #101418;
+  --panel: #171c21;
+  --border: #2c333b;
+  --text: #e4e8ec;
+  --muted: #98a2ac;
+  --accent: #5aa2e8;
+  --accent-strong: #6cb0f0;
+  --accent-contrast: #0d1420;
+  --accent-soft: #1d2c3d;
+  --chip-text: #a8cbeb;
+  --ok: #6fc284;
+  --ok-soft: #1d3325;
+  --bad: #ef8a80;
+  --bad-soft: #3a2422;
+  --warn: #e0b45c;
+  --warn-soft: #362c17;
+  --surface-2: #1c2228;
+  --surface-3: #1a2026;
+  --surface-4: #232a31;
+  --hover-bg: #20262d;
+  --input-bg: #12171c;
+  --button-bg: #1c2228;
+  --confirm-bg: #2a2413;
 }
 
 * {
@@ -36,7 +75,8 @@ a:hover {
 code {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
-  background: #eef1f4;
+  background: var(--surface-4);
+  color: var(--text);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -53,6 +93,7 @@ code {
 .error-text {
   color: var(--bad);
   margin: 8px 0;
+  white-space: pre-wrap;
 }
 
 .warn-text {
@@ -86,6 +127,20 @@ code {
 .topnav a.active {
   color: #fff;
   border-bottom: 2px solid var(--accent);
+}
+
+.topnav .theme-toggle {
+  margin-left: auto;
+  background: none;
+  border: 1px solid #3a424c;
+  color: #b9c2cb;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+.topnav .theme-toggle:hover {
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .container {
@@ -155,7 +210,7 @@ table.data td {
 }
 
 table.data th {
-  background: #fbfbfc;
+  background: var(--surface-2);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -175,7 +230,7 @@ table.data tr.expanded td {
 }
 
 table.data tr.expand-row td {
-  background: #fafbfc;
+  background: var(--surface-3);
   white-space: normal;
 }
 
@@ -186,7 +241,7 @@ td.expander {
 }
 
 td.best {
-  background: #e6f4ea;
+  background: var(--ok-soft);
   font-weight: 700;
 }
 
@@ -196,23 +251,23 @@ td.best {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 700;
-  background: #eef1f4;
+  background: var(--surface-4);
   color: var(--muted);
   text-transform: lowercase;
 }
 
 .badge.ok {
-  background: #e6f4ea;
+  background: var(--ok-soft);
   color: var(--ok);
 }
 
 .badge.bad {
-  background: #fbe9e7;
+  background: var(--bad-soft);
   color: var(--bad);
 }
 
 .badge.warn {
-  background: #fff3d6;
+  background: var(--warn-soft);
   color: var(--warn);
 }
 
@@ -224,7 +279,7 @@ td.best {
 .chip {
   display: inline-block;
   background: var(--accent-soft);
-  color: #15466e;
+  color: var(--chip-text);
   border-radius: 4px;
   padding: 1px 7px;
   font-size: 12px;
@@ -233,6 +288,7 @@ td.best {
 pre.log {
   background: #101418;
   color: #d5dbe1;
+  border: 1px solid var(--border);
   padding: 12px;
   border-radius: 6px;
   max-height: 380px;
@@ -285,7 +341,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 4px;
   font: inherit;
-  background: #fff;
+  background: var(--input-bg);
   color: var(--text);
 }
 
@@ -298,7 +354,7 @@ button {
   padding: 6px 14px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
+  background: var(--button-bg);
   color: var(--text);
   font: inherit;
   cursor: pointer;
@@ -317,12 +373,13 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
 button.primary:hover:not(:disabled) {
-  background: #0057ad;
-  color: #fff;
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--accent-contrast);
 }
 
 button.danger {
@@ -358,7 +415,7 @@ button.link {
 }
 
 .profile-item:hover {
-  background: #f4f7fa;
+  background: var(--hover-bg);
 }
 
 .profile-scorers {
@@ -384,7 +441,7 @@ button.link {
 }
 
 .bar-track {
-  background: #eef1f4;
+  background: var(--surface-4);
   border-radius: 2px;
   height: 10px;
   width: 100%;
@@ -511,7 +568,7 @@ button.link {
 
 .confirm-box {
   border: 1px solid var(--warn);
-  background: #fffbf0;
+  background: var(--confirm-bg);
   border-radius: 6px;
   padding: 12px 14px;
   margin: 10px 0;
@@ -523,11 +580,13 @@ button.link {
   border: 1px solid var(--accent);
   border-radius: 4px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   text-decoration: none;
 }
 
 .button-link:hover {
-  background: #0057ad;
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+  color: var(--accent-contrast);
   text-decoration: none;
 }

@@ -1,6 +1,8 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useTheme } from './theme'
 
 export default function App() {
+  const { theme, toggle } = useTheme()
   return (
     <div>
       <nav className="topnav">
@@ -17,6 +19,14 @@ export default function App() {
         <NavLink to="/compare" className={({ isActive }) => (isActive ? 'active' : '')}>
           Compare
         </NavLink>
+        <button
+          className="theme-toggle"
+          onClick={toggle}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label="Toggle color theme"
+        >
+          {theme === 'dark' ? '☀ light' : '🌙 dark'}
+        </button>
       </nav>
       <main className="container">
         <Outlet />

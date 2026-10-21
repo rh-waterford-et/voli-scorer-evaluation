@@ -10,9 +10,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { MetricBarChart } from '../components/Charts'
+import { MetricBarChart, chartColors } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
 import { api } from '../api'
+import { useTheme } from '../theme'
 import type { RunDetail, ScriptRun } from '../types'
 import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
 
@@ -232,14 +233,16 @@ function MetricBarChartWrapper({
   metric: string
   stat: Stat
 }) {
+  const { theme } = useTheme()
+  const colors = chartColors(theme)
   if (!chartData.length) return <div className="muted">No data.</div>
   return (
     <ResponsiveContainer width="100%" height={340}>
       <BarChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 56 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e9ee" />
-        <XAxis dataKey="profile" angle={-30} textAnchor="end" height={80} interval={0} tick={{ fontSize: 11 }} />
-        <YAxis tick={{ fontSize: 11 }} />
-        <Tooltip formatter={(value: any) => (value == null ? '—' : `${Number(value).toFixed(0)} ms`)} />
+        <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
+        <XAxis dataKey="profile" angle={-30} textAnchor="end" height={80} interval={0} stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
+        <YAxis stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
+        <Tooltip formatter={(value: any) => (value == null ? '—' : `${Number(value).toFixed(0)} ms`)} contentStyle={colors.tooltip} labelStyle={colors.tooltipLabel} />
         <Legend />
         {chartBars.map((bar) => (
           <Bar
