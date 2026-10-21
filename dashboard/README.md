@@ -88,7 +88,7 @@ npm install
 npm run build
 ```
 
-For `/v1/chat/completions` runs the benchmark needs a tokenizer, so install
+For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
 `transformers` into the same venv (TTS runs need nothing extra):
 
 ```bash

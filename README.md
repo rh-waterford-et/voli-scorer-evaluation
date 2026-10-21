@@ -2,13 +2,15 @@
 
 # **Overview**
 
-This document covers the usage, methodology, combinations, and findings of routing scorers in `vllm-omni` and `llmd`, coordinated via the llm-d-router coordinator.
+This document covers the usage, methodology, combinations, and findings of routing scorers in `vllm-omni` and `llmd`, via the llm-d-router coordinator.
+
+We have included a web console GUI tool for evaluation of the scorers please refer to README  [dashboard](dashboard/README.md)
 
 # **Goals**
 
 * Understand the function and characteristics of various scorers.  
 * Evaluate scorer combinations for text and multimodal models.  
-* Establish best practices for OpenShift deployment and testing.
+* Establish evaluation benchmarks and best practices for OpenShift deployment and testing, using the webconsole utility.
 
 # **OpenShift Implementation & Deployment**
 
@@ -109,168 +111,45 @@ All scorers implement scheduling.Scorer (Score() \-\> map\[Endpoint\]float64). E
 
 ⚠️ **Deprecation Warning**: Configuration files using `apiVersion: llm-d.ai/v1alpha1` should be updated to `apiVersion: llm-d.ai/v1`.
 
-# **Testing & Metrics**
+**N.B** We have copied our current deployments, configmaps etc into the directory reference-templates, these may change depnending on your deployment,
+they are used for reference only.
 
-## **Test Suite Scripts**
+# **Testing Metrics & Scoring Evaluation**
 
-Use `scripts/stream_metrics.py` to send streaming requests through the inference Gateway, compare EPP scheduling profiles, and record client-observed latency and backend routing. The profile → scorer map lives in `scripts/profile_scorers.json` (tracked default). The dashboard's Builder can mirror the live EPP ConfigMap into a local, gitignored `scripts/profile_scorers_local.json`, which takes precedence when present — after a sync, `--list-profiles`, suite validation, and result scorer labels match the cluster without any repo churn. Run `--list-profiles` to see the active map.
+## **Web Console GUI**
 
-## Before you start
+As mentioned we have included a simple webconsole to assist in the benchmarking and evaluation of scorers.
 
-```bash
-cd ~/Projects/red-hat/voli_scorers
-source .venv/bin/activate
-python stream_metrics.py --list-profiles
-```
+Refer to the dashboard README [dashboard](dashboard/README.md) for detailed usage
 
-For pod names in the routing results, log in with `oc` to the OpenShift cluster first. The script uses read-only `oc` pod and Gateway log queries to match each request to a backend. Without that access, latency measurements may still work, but routing can show `unknown`. The default namespace is `vllm-omni-validation`; the default endpoint is `http://10.6.62.51:31670`. Pass `--namespace` or `--url` if your environment differs.
+### Quick Start
 
-## Common commands
-
-**One profile, 10 sequential requests:**
+Requirements: Python 3.11+ and Node 18+.
 
 ```bash
-python stream_metrics.py \
-  --tokenizer Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --profile queueProfile \
-  --iterations 10 --concurrency 1 \
-  --output-json queue_sequential.json
+# backend venv (inside the repo)
+python3 -m venv dashboard/.venv
+dashboard/.venv/bin/pip install -r dashboard/backend/requirements.txt
+
+# frontend
+cd dashboard/frontend
+npm install
+npm run build
 ```
 
-**Every configured profile, using the default 10 sequential requests per profile:**
+For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
+`transformers` into the same venv (TTS runs need nothing extra):
 
 ```bash
-python stream_metrics.py \
-  --tokenizer Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --suite \
-  --output-json all_profiles.json
+dashboard/.venv/bin/pip install transformers
 ```
 
-This is 14 profiles × 10 requests = **140 requests**.
+## Run
 
-**Every profile at two loads:**
+**N.B** Pplease ensure you are logged into the OpenShift cluster, as the webconsole service makes use og the `oc` command
 
 ```bash
-python stream_metrics.py \
-  --tokenizer Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --suite --run 10x1 --run 50x10 \
-  --output-json all_profiles_two_loads.json
+dashboard/.venv/bin/uvicorn app:app --app-dir dashboard/backend --port 8765
 ```
 
-`10x1` means 10 total requests with at most 1 in flight; `50x10` means 50 total with at most 10 in flight. Every profile gets both runs: 14 × (10 + 50) = **840 requests** across **28 runs**. Profiles and runs execute one after another; only requests within a run overlap.
-
-**Compare a few profiles at the same loads:**
-
-```bash
-python stream_metrics.py \
-  --tokenizer Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --profiles activeRequestProfile,queueProfile,tokenLoadProfile \
-  --run 10x1 --run 50x10 \
-  --output-json selected_profiles.json
-```
-
-**Give profiles different run settings:**
-
-Edit `suite_plan.example.json` to choose profiles and set each profile's `iterations` and `concurrency`, then run:
-
-```bash
-python stream_metrics.py \
-  --tokenizer Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --suite-file suite_plan.example.json \
-  --output-json planned_profiles.json
-```
-
-The example plan includes `activeRequestProfile`, `queueProfile`, and `tokenLoadProfile`. `--suite-file` takes the place of `--suite`, `--profiles`, `--profile`, and `--run`; do not combine them.
-
-**Inspect routing for one profile:**
-
-```bash
-python stream_metrics.py \
-  --tokenizer Qwen/Qwen3-Omni-30B-A3B-Instruct \
-  --profile queueProfile \
-  --iterations 10 --concurrency 10 \
-  --gateway-wait 30 --debug \
-  --output-json queue_debug.json
-```
-
-`--debug` adds each request's status, selected pod if known, route source, latency, and error. `--gateway-wait 30` gives Gateway access logs up to 30 seconds to become available; the default is 10 seconds.
-
-## Flag quick reference
-
-| Flag | What it does |
-|---|---|
-| `--tokenizer NAME_OR_PATH` | Required for benchmark runs; counts generated text tokens for the TPOT estimate. Use the matching model tokenizer. |
-| `--list-profiles` | Print the script's profile → scorer map and exit. No tokenizer needed. |
-| `--profile NAME` | Run one EPP profile. Without it or a suite flag, the script uses `default`. |
-| `--suite` | Run all 14 profiles in the built-in map. |
-| `--profiles A,B` | Run only the named profiles, with the same load settings for each. |
-| `--suite-file FILE` | Read per-profile load settings from a JSON plan. |
-| `--iterations N` / `-n N` | Total requests in a run; default 10. Also sets the suite default when no `--run` is given. |
-| `--concurrency N` / `-c N` | Maximum requests in flight in a run; default 1. |
-| `--run NxC` | One load setting: N total requests, at most C concurrent. Repeat for multiple runs per selected profile; these settings replace `--iterations` and `--concurrency`. |
-| `--output-json FILE` | Save run summaries and per-request details for later comparison. |
-| `--debug` | Print per-request details in the terminal; summaries are shown without it. |
-| `--gateway-wait SECONDS` | Wait for Gateway access log records used to identify backend pods. |
-| `--url URL` / `--model NAME` | Override the default Gateway address or model name. |
-| `--modalities text,audio` | Request both outputs (default); use `text` or `audio` for a single modality. |
-| `--prompt TEXT` / `--prompts-file FILE` | Use one prompt or cycle through nonempty lines in a file. |
-| `--namespace NAME` | Namespace for pod and Gateway log lookup. |
-| `--no-backend-lookup` | Skip `oc` queries when pod routing is not needed. |
-
-Run `python stream_metrics.py --help` for less common options such as API key, voice, audio format, Gateway pod/container override, and request timeout.
-
-*Note: When testing with `running-requests-size-scorer`, ensure `"injectDefaults": true` is configured to allow metrics consumption in the pod.*
-
-## Read the results
-
-Each run reports the requested **profile and scorer**, valid/failed response counts, latency summaries, and **Routing (all requests)**. The routing counts include failed requests; use the valid response count when comparing latency. A split such as 9 requests to one pod and 1 to the other is a real observed split, though a small run cannot establish that the scorer caused it.
-
-`unknown` means the script could not resolve that request to a pod. It is not a pod name. With `--debug` or the JSON output, check the request's `status`, `error`, `upstream`, and `backend_source`. A failed request may never reach a backend; a successful request can still be `unknown` if its Gateway log record or IP-to-pod match is missing. Confirm `oc` login and try a longer `--gateway-wait` before interpreting the split.
-
-TTFT, TTFA, and end-to-end latency are observed at the client. Text chunk gaps are an ITL proxy, and text TPOT is an estimate because one streamed chunk can contain multiple tokens. P99 from fewer than 100 valid responses is only a rough tail indicator. The profile/scorer label comes from the script's map and requested header; routing and latency alone do not prove that a scorer made a particular decision.
-
-## EPP raw scores and weighted totals
-
-EPP must run with `--v=4` and JSON logging (`--zap-encoder json`).
-
-```bash
-python scripts/stream_metrics.py \
-  --endpoint /v1/audio/speech --model qwen3-tts \
-  --profile queueRunningProfile \
-  --run 10x1 --run 50x10 \
-  --epp-scores --debug \
-  --output-json queue_running_scores.json
-```
-
-- `--epp-scores`: collect raw scores, weighted totals, and picker selections.
-- `--debug`: display per-request score tables.
-- `--output-json`: save results, including scores, to a JSON file.
-
-## Session-affinity testing
-
-```bash
-python scripts/stream_metrics.py \
-  --endpoint /v1/audio/speech --model qwen3-tts \
-  --profile sessionAffinityProfile \
-  --iterations 30 --concurrency 2 --session-length 5 \
-  --epp-scores --debug --output-json /tmp/tts_sessions.json
-```
-
-- `--session-length N`: replay `x-session-token` within each group of up to N requests. The example runs six sessions, up to two concurrently, with five sequential requests each. The last session may be shorter.
-- `--session-header NAME`: override the token header if EPP uses a different name.
-
-Reports and JSON include token coverage, pod continuity, and separate latency results for initial and replayed requests. Use the same session settings when comparing profiles.
-
-## Create a Mardown report
-
-The stream_metrics.py script creates a json file for reference.
-
-use the script `gen_profile_md.py` to create a markdown report for easier viewing and analysis 
-
-## Dashboard
-
-A local web UI for running these benchmark suites and exploring results (profile selection, live progress, sortable/comparable metrics, per-request EPP scores) lives in [`dashboard/`](dashboard/README.md). It wraps `stream_metrics.py` without modifying it; see `dashboard/README.md` for setup and usage.
-
-
-
-
+Then open <http://localhost:8765>.
