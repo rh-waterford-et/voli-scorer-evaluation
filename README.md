@@ -2,15 +2,15 @@
 
 # **Overview**
 
-This document covers the usage, methodology, combinations, and findings of routing scorers in `vllm-omni` and `llmd`, via the llm-d-router coordinator.
+This document covers the usage, methodology, combinations, and findings of routing scorers in `vllm-omni` and `llm-d`, via the llm-d-router coordinator.
 
-We have included a web console GUI tool for evaluation of the scorers please refer to README  [dashboard](dashboard/README.md)
+The repository includes a web console for evaluating scorers. See the [dashboard README](dashboard/README.md) for details.
 
 # **Goals**
 
 * Understand the function and characteristics of various scorers.  
 * Evaluate scorer combinations for text and multimodal models.  
-* Establish evaluation benchmarks and best practices for OpenShift deployment and testing, using the webconsole utility.
+* Establish evaluation benchmarks and best practices for OpenShift deployment and testing, using the web console.
 
 # **OpenShift Implementation & Deployment**
 
@@ -111,16 +111,15 @@ All scorers implement scheduling.Scorer (Score() \-\> map\[Endpoint\]float64). E
 
 ⚠️ **Deprecation Warning**: Configuration files using `apiVersion: llm-d.ai/v1alpha1` should be updated to `apiVersion: llm-d.ai/v1`.
 
-**N.B** We have copied our current deployments, configmaps etc into the directory reference-templates, these may change depnending on your deployment,
-they are used for reference only.
+The `reference-manifests/` directory contains copies of our current Deployments, ConfigMaps, and related resources. They may need to be adapted for your deployment and are provided as references only.
 
 # **Testing Metrics & Scoring Evaluation**
 
 ## **Web Console GUI**
 
-As mentioned we have included a simple webconsole to assist in the benchmarking and evaluation of scorers.
+The repository includes a simple web console for benchmarking and evaluating scorers.
 
-Refer to the dashboard README [dashboard](dashboard/README.md) for detailed usage
+See the [dashboard README](dashboard/README.md) for detailed usage instructions.
 
 ### Quick Start
 
@@ -146,7 +145,7 @@ dashboard/.venv/bin/pip install transformers
 
 ## Run
 
-**N.B** Pplease ensure you are logged into the OpenShift cluster, as the webconsole service makes use og the `oc` command
+Before using the dashboard for cluster operations, log in to OpenShift with `oc`.
 
 ```bash
 dashboard/.venv/bin/uvicorn app:app --app-dir dashboard/backend --port 8765

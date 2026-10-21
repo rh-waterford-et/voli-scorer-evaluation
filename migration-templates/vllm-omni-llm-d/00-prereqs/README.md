@@ -1,7 +1,7 @@
 # Prerequisites
 
-Check these on the **new** cluster before applying anything else. Everything
-in this `transfer/` directory assumes they are already satisfied.
+Check these prerequisites on the **new** cluster before applying anything else.
+The deployment files in this package assume they are already satisfied.
 
 ## 1. GPU-capable nodes
 
