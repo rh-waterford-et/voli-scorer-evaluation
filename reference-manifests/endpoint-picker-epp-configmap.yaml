@@ -62,7 +62,7 @@ data:
       - pluginRef: session-affinity-scorer
         weight: 1
   tts.yaml: |
-    apiVersion: inference.networking.x-k8s.io/v1alpha1
+    apiVersion: llm-d.ai/v1alpha1
     kind: EndpointPickerConfig
 
     plugins:
@@ -89,12 +89,29 @@ data:
         attributeKey: omni.waiting
         algorithm:
           type: linear_lower_is_better
+    - name: endpointLabels
+      type: label-producer
+      parameters:
+        labels:
+        - label: llm-d.ai/baseline-model
+          attributeKey: baselineModel
+    - name: endpointAttributeWeight
+      type: endpoint-attribute-weight-scorer
+      parameters:
+        attributeKey: baselineModel
+        producer: endpointLabels
+        weights:
+          qwen3-omni: 1.0
     - name: contextLength
       type: context-length-aware
     - name: prefixCacheProducer
       type: approx-prefix-cache-producer
     - name: prefixCache
       type: prefix-cache-scorer
+      parameters:
+        prefixMatchInfoProducerName: prefixCacheProducer
+    - name: noHitLru
+      type: no-hit-lru-scorer
       parameters:
         prefixMatchInfoProducerName: prefixCacheProducer
     - name: sessionAffinity
@@ -132,6 +149,13 @@ data:
           customMetrics:
           - attributeKey: omni.waiting
             metricSpec: vllm_omni:num_requests_waiting
+    - name: predictedLatency
+      type: predicted-latency-producer
+      parameters:
+        streamingMode: true
+    - name: latency
+      type: latency-scorer
+      # The predictor sidecars must be deployed before using latencyProfile.
     - name: maxScore
       type: max-score-picker
 
@@ -168,6 +192,10 @@ data:
       plugins:
       - pluginRef: endpointAttribute
       - pluginRef: maxScore
+    - name: endpointAttributeWeightProfile
+      plugins:
+      - pluginRef: endpointAttributeWeight
+      - pluginRef: maxScore
     - name: contextLengthProfile
       plugins:
       - pluginRef: contextLength
@@ -175,6 +203,10 @@ data:
     - name: prefixCacheProfile
       plugins:
       - pluginRef: prefixCache
+      - pluginRef: maxScore
+    - name: noHitLruProfile
+      plugins:
+      - pluginRef: noHitLru
       - pluginRef: maxScore
     - name: sessionAffinityProfile
       plugins:
@@ -196,6 +228,76 @@ data:
       plugins:
       - pluginRef: topologyAffinity
       - pluginRef: maxScore
+    - name: latencyProfile
+      plugins:
+      - pluginRef: predictedLatency
+      - pluginRef: latency
+      - pluginRef: maxScore
+    - name: queueRunningProfile
+      plugins:
+      - pluginRef: queue
+        weight: 2
+      - pluginRef: runningRequests
+        weight: 1
+      - pluginRef: maxScore
+    - name: activeQueueProfile
+      plugins:
+      - pluginRef: activeRequest
+        weight: 2
+      - pluginRef: queue
+        weight: 1
+      - pluginRef: maxScore
+    - name: activeRunningProfile
+      plugins:
+      - pluginRef: activeRequest
+        weight: 2
+      - pluginRef: runningRequests
+        weight: 1
+      - pluginRef: maxScore
+    - name: kvacheQueueDepthProfile
+      plugins:
+      - pluginRef: kvCacheUtilization
+        weight: 2
+      - pluginRef: queue
+        weight: 1
+      - pluginRef: maxScore
+    - name: activeSessionProfile
+      plugins:
+      - pluginRef: activeRequest
+        weight: 2
+      - pluginRef: sessionAffinity
+        weight: 1
+      - pluginRef: maxScore
+    - name: queueSessionProfile
+      plugins:
+      - pluginRef: queue
+        weight: 2
+      - pluginRef: sessionAffinity
+        weight: 1
+      - pluginRef: maxScore
+    - name: sessionActiveProfile
+      plugins:
+      - pluginRef: sessionAffinity
+        weight: 2
+      - pluginRef: activeRequest
+        weight: 1
+      - pluginRef: maxScore
+    - name: sessionQueueProfile
+      plugins:
+      - pluginRef: sessionAffinity
+        weight: 2
+      - pluginRef: queue
+        weight: 1
+      - pluginRef: maxScore
+    - name: sessionActiveQueueProfile
+      plugins:
+      - pluginRef: sessionAffinity
+        weight: 2
+      - pluginRef: activeRequest
+        weight: 2
+      - pluginRef: queue
+        weight: 1
+      - pluginRef: maxScore
 
     dataLayer:
       injectDefaults: true
@@ -211,10 +313,7 @@ metadata:
   annotations:
     meta.helm.sh/release-name: endpoint-picker
     meta.helm.sh/release-namespace: vllm-omni-validation
-  creationTimestamp: "2026-10-13T12:21:32Z"
   labels:
     app.kubernetes.io/managed-by: Helm
   name: endpoint-picker-epp
   namespace: vllm-omni-validation
-  resourceVersion: "110690819"
-  uid: 699dcff4-807b-47bc-8ccc-2b5480d0a242

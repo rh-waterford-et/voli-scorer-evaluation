@@ -1,105 +1,134 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
+  labels:
+    batch.kubernetes.io/controller-uid: 0cec68bd-7ac7-40d8-ac73-5f07d4f6fe4f
+    batch.kubernetes.io/job-name: preload-qwen3-tts
+    controller-uid: 0cec68bd-7ac7-40d8-ac73-5f07d4f6fe4f
+    job-name: preload-qwen3-tts
   name: preload-qwen3-tts
   namespace: vllm-omni-validation
 spec:
-  backoffLimit: 0
   activeDeadlineSeconds: 14400
+  backoffLimit: 0
+  completionMode: NonIndexed
+  completions: 1
+  manualSelector: false
+  parallelism: 1
+  podReplacementPolicy: TerminatingOrFailed
+  selector:
+    matchLabels:
+      batch.kubernetes.io/controller-uid: 0cec68bd-7ac7-40d8-ac73-5f07d4f6fe4f
+  suspend: false
   template:
+    metadata:
+      labels:
+        batch.kubernetes.io/controller-uid: 0cec68bd-7ac7-40d8-ac73-5f07d4f6fe4f
+        batch.kubernetes.io/job-name: preload-qwen3-tts
+        controller-uid: 0cec68bd-7ac7-40d8-ac73-5f07d4f6fe4f
+        job-name: preload-qwen3-tts
     spec:
+      containers:
+      - args:
+        - |
+          set -eu
+          python -m venv /tmp/download-venv
+          /tmp/download-venv/bin/pip install --no-cache-dir "huggingface_hub==0.36.0"
+          /tmp/download-venv/bin/python -u - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from datetime import datetime, timezone
+          from huggingface_hub import HfApi, snapshot_download
+
+          repo = os.environ["MODEL_ID"]
+          requested = os.environ["MODEL_REVISION"]
+          root = Path("/models")
+          destination = root / "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+          revision_file = root / "qwen3-tts-revision.txt"
+          complete_file = root / "qwen3-tts-download-complete.json"
+
+          if revision_file.exists():
+              revision = revision_file.read_text().strip()
+              if requested != "main" and revision != requested:
+                  raise RuntimeError("Existing cache revision differs; use a separate cache for a new revision")
+          else:
+              revision = HfApi().model_info(repo, revision=requested).sha
+              revision_file.write_text(revision + "\n")
+
+          complete_file.unlink(missing_ok=True)
+          print(f"Model: {repo}", flush=True)
+          print(f"Pinned revision: {revision}", flush=True)
+          print(f"Destination: {destination}", flush=True)
+          snapshot_download(repo_id=repo, revision=revision,
+                            local_dir=str(destination), max_workers=2)
+          if not (destination / "config.json").is_file():
+              raise RuntimeError("Missing :q!config.json")
+          if not any(destination.rglob("*.safetensors")):
+              raise RuntimeError("No safetensors weights found")
+          record = {
+              "model_id": repo,
+              "revision": revision,
+              "path": str(destination),
+              "completed_at": datetime.now(timezone.utc).isoformat(),
+          }
+          complete_file.write_text(json.dumps(record, indent=2) + "\n")
+          os.sync()
+          print(json.dumps(record, indent=2), flush=True)
+          print("MODEL DOWNLOAD COMPLETE", flush=True)
+          PY
+        command:
+        - /bin/sh
+        - -c
+        env:
+        - name: MODEL_ID
+          value: Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
+        - name: MODEL_REVISION
+          value: 0c0e3051f131929182e2c023b9537f8b1c68adfe
+        - name: HOME
+          value: /tmp
+        - name: HF_HOME
+          value: /models/.huggingface
+        - name: HF_HUB_DISABLE_XET
+          value: '1'
+        - name: HF_HUB_DOWNLOAD_TIMEOUT
+          value: '120'
+        - name: HF_HUB_DISABLE_TELEMETRY
+          value: '1'
+        image: docker.io/library/python:3.11-slim-bookworm
+        imagePullPolicy: IfNotPresent
+        name: download
+        resources:
+          limits:
+            cpu: '2'
+            ephemeral-storage: 4Gi
+            memory: 4Gi
+          requests:
+            cpu: 500m
+            ephemeral-storage: 1Gi
+            memory: 1Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /models
+          name: models
+      dnsPolicy: ClusterFirst
       restartPolicy: Never
+      schedulerName: default-scheduler
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1001040000
         fsGroup: 1001040000
         fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        runAsUser: 1001040000
         seccompProfile:
           type: RuntimeDefault
-      containers:
-        - name: download
-          image: docker.io/library/python:3.11-slim-bookworm
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              set -eu
-              python -m venv /tmp/download-venv
-              /tmp/download-venv/bin/pip install --no-cache-dir "huggingface_hub==0.36.0"
-              /tmp/download-venv/bin/python -u - <<'PY'
-              import json
-              import os
-              from pathlib import Path
-              from datetime import datetime, timezone
-              from huggingface_hub import HfApi, snapshot_download
-
-              repo = os.environ["MODEL_ID"]
-              requested = os.environ["MODEL_REVISION"]
-              root = Path("/models")
-              destination = root / "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-              revision_file = root / "qwen3-tts-revision.txt"
-              complete_file = root / "qwen3-tts-download-complete.json"
-
-              if revision_file.exists():
-                  revision = revision_file.read_text().strip()
-                  if requested != "main" and revision != requested:
-                      raise RuntimeError("Existing cache revision differs; use a separate cache for a new revision")
-              else:
-                  revision = HfApi().model_info(repo, revision=requested).sha
-                  revision_file.write_text(revision + "\n")
-
-              complete_file.unlink(missing_ok=True)
-              print(f"Model: {repo}", flush=True)
-              print(f"Pinned revision: {revision}", flush=True)
-              print(f"Destination: {destination}", flush=True)
-              snapshot_download(repo_id=repo, revision=revision,
-                                local_dir=str(destination), max_workers=2)
-              if not (destination / "config.json").is_file():
-                  raise RuntimeError("Missing :q!config.json")
-              if not any(destination.rglob("*.safetensors")):
-                  raise RuntimeError("No safetensors weights found")
-              record = {
-                  "model_id": repo,
-                  "revision": revision,
-                  "path": str(destination),
-                  "completed_at": datetime.now(timezone.utc).isoformat(),
-              }
-              complete_file.write_text(json.dumps(record, indent=2) + "\n")
-              os.sync()
-              print(json.dumps(record, indent=2), flush=True)
-              print("MODEL DOWNLOAD COMPLETE", flush=True)
-              PY
-          env:
-            - name: MODEL_ID
-              value: "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-            - name: MODEL_REVISION
-              value: "0c0e3051f131929182e2c023b9537f8b1c68adfe"
-            - name: HOME
-              value: /tmp
-            - name: HF_HOME
-              value: /models/.huggingface
-            - name: HF_HUB_DISABLE_XET
-              value: "1"
-            - name: HF_HUB_DOWNLOAD_TIMEOUT
-              value: "120"
-            - name: HF_HUB_DISABLE_TELEMETRY
-              value: "1"
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          resources:
-            requests:
-              cpu: 500m
-              memory: 1Gi
-              ephemeral-storage: 1Gi
-            limits:
-              cpu: "2"
-              memory: 4Gi
-              ephemeral-storage: 4Gi
-          volumeMounts:
-            - name: models
-              mountPath: /models
+      terminationGracePeriodSeconds: 30
       volumes:
-        - name: models
-          persistentVolumeClaim:
-            claimName: qwen3-omni-model-cache 
+      - name: models
+        persistentVolumeClaim:
+          claimName: qwen3-omni-model-cache

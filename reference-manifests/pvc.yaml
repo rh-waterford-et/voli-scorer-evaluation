@@ -1,12 +1,19 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: qwen-omni-model-cache
-  namespace: et-voli
+  annotations:
+    pv.kubernetes.io/bind-completed: 'yes'
+    pv.kubernetes.io/bound-by-controller: 'yes'
+    volume.beta.kubernetes.io/storage-provisioner: driver.longhorn.io
+    volume.kubernetes.io/storage-provisioner: driver.longhorn.io
+  name: qwen3-omni-model-cache
+  namespace: vllm-omni-validation
 spec:
   accessModes:
-    - ReadWriteOnce
-  storageClassName: gp3-csi-retain
+  - ReadWriteOnce
   resources:
     requests:
       storage: 200Gi
+  storageClassName: longhorn-h100-cache
+  volumeMode: Filesystem
+  volumeName: pvc-0b92df94-4a28-4e80-877d-2a19d4e1d38f

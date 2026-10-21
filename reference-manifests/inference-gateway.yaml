@@ -1,23 +1,12 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  annotations:
-    deployment.kubernetes.io/revision: "1"
-  creationTimestamp: "2026-10-13T12:20:44Z"
-  generation: 1
   labels:
     gateway.istio.io/managed: openshift.io-gateway-controller-v1
     gateway.networking.k8s.io/gateway-class-name: data-science-gateway-class
     gateway.networking.k8s.io/gateway-name: inference-gateway
   name: inference-gateway-data-science-gateway-class
   namespace: vllm-omni-validation
-  ownerReferences:
-  - apiVersion: gateway.networking.k8s.io/v1beta1
-    kind: Gateway
-    name: inference-gateway
-    uid: 9f5c64d2-aba8-404f-a672-b0b50b8b4a6d
-  resourceVersion: "109251188"
-  uid: b70896a7-d905-4f8d-93ae-07384c2849a0
 spec:
   progressDeadlineSeconds: 600
   replicas: 1
@@ -35,15 +24,15 @@ spec:
       annotations:
         istio.io/rev: openshift-gateway
         prometheus.io/path: /stats/prometheus
-        prometheus.io/port: "15020"
-        prometheus.io/scrape: "true"
+        prometheus.io/port: '15020'
+        prometheus.io/scrape: 'true'
       labels:
         gateway.istio.io/managed: istio.io-gateway-controller
         gateway.networking.k8s.io/gateway-class-name: data-science-gateway-class
         gateway.networking.k8s.io/gateway-name: inference-gateway
         service.istio.io/canonical-name: inference-gateway-data-science-gateway-class
         service.istio.io/canonical-revision: latest
-        sidecar.istio.io/inject: "false"
+        sidecar.istio.io/inject: 'false'
     spec:
       containers:
       - args:
@@ -90,7 +79,7 @@ spec:
         - name: ISTIO_CPU_LIMIT
           valueFrom:
             resourceFieldRef:
-              divisor: "0"
+              divisor: '0'
               resource: limits.cpu
         - name: PROXY_CONFIG
           value: |
@@ -101,12 +90,12 @@ spec:
         - name: GOMEMLIMIT
           valueFrom:
             resourceFieldRef:
-              divisor: "0"
+              divisor: '0'
               resource: limits.memory
         - name: GOMAXPROCS
           valueFrom:
             resourceFieldRef:
-              divisor: "0"
+              divisor: '0'
               resource: limits.cpu
         - name: ISTIO_META_CLUSTER_ID
           value: Kubernetes
@@ -149,7 +138,7 @@ spec:
           timeoutSeconds: 1
         resources:
           limits:
-            cpu: "2"
+            cpu: '2'
             memory: 1Gi
           requests:
             cpu: 100m
@@ -199,7 +188,7 @@ spec:
       securityContext:
         sysctls:
         - name: net.ipv4.ip_unprivileged_port_start
-          value: "0"
+          value: '0'
       serviceAccount: inference-gateway-data-science-gateway-class
       serviceAccountName: inference-gateway-data-science-gateway-class
       terminationGracePeriodSeconds: 30
@@ -239,24 +228,3 @@ spec:
           defaultMode: 420
           name: openshift-gw-ca-root-cert
         name: istiod-ca-cert
-status:
-  availableReplicas: 1
-  conditions:
-  - lastTransitionTime: "2026-10-13T12:20:49Z"
-    lastUpdateTime: "2026-10-13T12:20:49Z"
-    message: Deployment has minimum availability.
-    reason: MinimumReplicasAvailable
-    status: "True"
-    type: Available
-  - lastTransitionTime: "2026-10-13T12:20:44Z"
-    lastUpdateTime: "2026-10-13T12:20:49Z"
-    message: ReplicaSet "inference-gateway-data-science-gateway-class-7bc89c4cdf"
-      has successfully progressed.
-    reason: NewReplicaSetAvailable
-    status: "True"
-    type: Progressing
-  observedGeneration: 1
-  readyReplicas: 1
-  replicas: 1
-  terminatingReplicas: 0
-  updatedReplicas: 1

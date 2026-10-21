@@ -2,11 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   annotations:
-    deployment.kubernetes.io/revision: "1"
     meta.helm.sh/release-name: endpoint-picker
     meta.helm.sh/release-namespace: vllm-omni-validation
-  creationTimestamp: "2026-10-13T12:21:32Z"
-  generation: 1
   labels:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/name: endpoint-picker-epp
@@ -14,8 +11,6 @@ metadata:
     llm-d.ai/igw-mode: llm-d-router-gateway
   name: endpoint-picker-epp
   namespace: vllm-omni-validation
-  resourceVersion: "109251963"
-  uid: 4637b2f6-a59e-4bfb-8936-3610448047b4
 spec:
   progressDeadlineSeconds: 600
   replicas: 1
@@ -28,7 +23,8 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: 0b8606a6408f7f5c4f4334d4980b0448073e49b336b6c6b4c7e26c8468250ff7
+        checksum/config: 2c1be9822cc3c6d2052e469ae93422fb8b5c97311b963ab6544337b3fb836b35
+        kubectl.kubernetes.io/restartedAt: '2026-10-21T11:18:34+01:00'
       labels:
         llm-d-router-gateway: endpoint-picker-epp
         llm-d.ai/igw-mode: llm-d-router-gateway
@@ -46,10 +42,11 @@ spec:
         - --config-file
         - /config/tts.yaml
         - --grpc-health-port
-        - "9003"
+        - '9003'
         - --allow-experimental-plugins=true
         - --secure-serving=false
         - --tracing=false
+        - --v=4
         env:
         - name: NAMESPACE
           valueFrom:
@@ -61,7 +58,17 @@ spec:
             fieldRef:
               apiVersion: v1
               fieldPath: metadata.name
-        image: quay.io/rh_et_wd/llm-d-router-endpoint-picker:new-approach
+        - name: TRAINING_SERVER_URL
+          value: http://localhost:8000
+        - name: PREDICTION_SERVER_URL
+          value: http://localhost:8001
+        - name: LATENCY_MAX_SAMPLE_SIZE
+          value: '10000'
+        - name: LATENCY_MAX_CONCURRENT_DISPATCHES
+          value: '36'
+        - name: LATENCY_COALESCE_WINDOW_MS
+          value: '1'
+        image: ghcr.io/llm-d/llm-d-router-endpoint-picker:v0.11.0
         imagePullPolicy: Always
         lifecycle:
           preStop:
@@ -97,7 +104,7 @@ spec:
           timeoutSeconds: 1
         resources:
           limits:
-            cpu: "2"
+            cpu: '2'
             memory: 2Gi
           requests:
             cpu: 500m
@@ -119,23 +126,3 @@ spec:
           defaultMode: 420
           name: endpoint-picker-epp
         name: plugins-config-volume
-status:
-  availableReplicas: 1
-  conditions:
-  - lastTransitionTime: "2026-10-13T12:21:36Z"
-    lastUpdateTime: "2026-10-13T12:21:36Z"
-    message: Deployment has minimum availability.
-    reason: MinimumReplicasAvailable
-    status: "True"
-    type: Available
-  - lastTransitionTime: "2026-10-13T12:21:32Z"
-    lastUpdateTime: "2026-10-13T12:21:36Z"
-    message: ReplicaSet "endpoint-picker-epp-844d874b54" has successfully progressed.
-    reason: NewReplicaSetAvailable
-    status: "True"
-    type: Progressing
-  observedGeneration: 1
-  readyReplicas: 1
-  replicas: 1
-  terminatingReplicas: 0
-  updatedReplicas: 1
