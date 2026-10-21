@@ -188,6 +188,7 @@ def list_runs(include_reports: bool = True):
             "created_at": meta.get("created_at"),
             "status": meta.get("status"),
             "source": "dashboard",
+            "model": (meta.get("params") or {}).get("model"),
         }
         summary = store.ensure_summary(meta)
         if summary:
