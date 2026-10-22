@@ -98,6 +98,9 @@ dashboard/.venv/bin/pip install transformers
 ## Run
 
 ```bash
+# cd back to the main folder
+cd ../../
+# launch the application
 dashboard/.venv/bin/uvicorn app:app --app-dir dashboard/backend --port 8765
 ```
 
