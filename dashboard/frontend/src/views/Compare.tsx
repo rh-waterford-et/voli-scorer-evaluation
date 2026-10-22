@@ -154,14 +154,28 @@ export default function Compare() {
 
   // Latency-like metrics: lower is better. Winner highlighting is suppressed
   // while the runs differ in a confounder (prompt, session, model, ...).
+  // A profile only has a "winner" when it has values in two or more runs at
+  // the selected load; when no profile does (typical one-profile-per-run
+  // comparisons), the single best value overall is highlighted instead.
   const isLowerBetter = !metric.startsWith('unknown')
   const bestByProfile = new Map<string, number>()
+  let globalBestValue: number | null = null
   if (isLowerBetter && comparable) {
     for (const profile of profiles) {
       const values = details
         .map((detail) => cellValue(detail, profile))
         .filter((value): value is number => value != null)
-      if (values.length) bestByProfile.set(profile, Math.min(...values))
+      if (values.length > 1) bestByProfile.set(profile, Math.min(...values))
+    }
+    if (!bestByProfile.size) {
+      for (const profile of profiles) {
+        for (const detail of details) {
+          const value = cellValue(detail, profile)
+          if (value != null && (globalBestValue == null || value < globalBestValue)) {
+            globalBestValue = value
+          }
+        }
+      }
     }
   }
 
@@ -324,7 +338,10 @@ export default function Compare() {
                     <td className="mono">{profile}</td>
                     {details.map((detail) => {
                       const value = cellValue(detail, profile)
-                      const isBest = value != null && best != null && Math.abs(value - best) < 1e-9
+                      const isBest =
+                        value != null &&
+                        ((best != null && Math.abs(value - best) < 1e-9) ||
+                          (globalBestValue != null && Math.abs(value - globalBestValue) < 1e-9))
                       return (
                         <td key={detail.id} className={`num${isBest ? ' best' : ''}`}>
                           {fmtMs(value)}
@@ -339,9 +356,17 @@ export default function Compare() {
         </div>
         <p className="muted">
           {comparable ? (
-            <>
-              Highlighted cells are the best (lowest) value for that profile at load {load || '—'}.
-            </>
+            bestByProfile.size ? (
+              <>
+                Highlighted cells are the best (lowest) value for that profile across runs at
+                load {load || '—'}.
+              </>
+            ) : (
+              <>
+                No profile appears in more than one run at this load, so the single best value
+                overall is highlighted.
+              </>
+            )
           ) : (
             <>
               Winner highlighting is disabled because the runs differ in {mismatched.join(', ')}.
