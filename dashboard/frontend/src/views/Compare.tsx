@@ -220,6 +220,42 @@ export default function Compare() {
     )
   }
 
+  // The comparison view is for runs that each benchmark a single scheduling
+  // profile (at one or more loads). Suite runs are a different measurement
+  // context (profiles execute sequentially and influence each other's pod
+  // and cache state), so they are blocked here, not silently dropped.
+  const multiProfileRuns = details
+    .map((detail) => ({
+      detail,
+      profileCount: new Set((detail.results?.runs ?? []).map((run) => run.profile)).size,
+    }))
+    .filter((entry) => entry.profileCount > 1)
+  if (multiProfileRuns.length) {
+    return (
+      <div>
+        <div className="page-head">
+          <h1>Compare runs</h1>
+        </div>
+        <div className="warn-text panel">
+          <strong>These runs cannot be compared here.</strong> The comparison view compares
+          runs that each benchmark a single scheduling profile; the following selections
+          contain multiple profiles:
+          <ul style={{ margin: '6px 0', paddingLeft: 20 }}>
+            {multiProfileRuns.map((entry) => (
+              <li key={entry.detail.id}>
+                <span className="mono">{entry.detail.name || entry.detail.id}</span> —{' '}
+                {entry.profileCount} profiles
+              </li>
+            ))}
+          </ul>
+          Deselect them and compare single-profile runs (single scorer or combined scorers
+          both work), or open a suite run from the History view to browse its per-profile
+          results.
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="page-head">

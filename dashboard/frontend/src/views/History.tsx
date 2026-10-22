@@ -106,14 +106,25 @@ export default function History() {
       key: 'name',
       label: 'Name',
       sort: (row) => row.name ?? '',
-      render: (row) => <Link to={`/runs/${encodeURIComponent(row.id)}`}>{row.name || row.id}</Link>,
-    },
-    {
-      key: 'source',
-      label: 'Source',
-      title: 'dashboard = run started from this UI · report = committed JSON under reports/ (read-only)',
-      sort: (row) => row.source,
-      render: (row) => <span className="chip">{row.source}</span>,
+      render: (row) => {
+        const profileCount = row.summary?.profiles.length ?? 0
+        return (
+          <Link to={`/runs/${encodeURIComponent(row.id)}`}>
+            {row.name || row.id}
+            {profileCount > 1 && (
+              <>
+                {' '}
+                <span
+                  className="chip"
+                  title={`Benchmarks ${profileCount} profiles — browse its results from the run view; not comparable in the Compare view`}
+                >
+                  suite
+                </span>
+              </>
+            )}
+          </Link>
+        )
+      },
     },
     {
       key: 'status',
@@ -214,9 +225,10 @@ export default function History() {
         />
       </div>
       <p className="muted">
-        Runs with source <span className="chip">report</span> are JSON files committed under{' '}
-        <code>reports/</code>. Deleting one removes the file from the working tree — commit the
-        deletion to make it permanent.
+        Runs marked <span className="chip">suite</span> benchmark multiple scheduling profiles
+        and cannot be compared in the Compare view — open the run to browse its per-profile
+        results. Compare works with runs that each benchmark a single profile (with one or more
+        scorers).
       </p>
     </div>
   )
