@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 STATE_PATH = Path(
     os.environ.get("FAKE_OC_STATE") or REPO / "dashboard" / "data" / "fake-oc-state.json"
 )
-TEMPLATE = REPO / "templates" / "endpoint-picker-epp-configmap.yaml"
+TEMPLATE = REPO / "reference-manifests" / "endpoint-picker-epp-configmap.yaml"
 MODE = os.environ.get("FAKE_OC_MODE") or ""
 
 NAMESPACE = "vllm-omni-validation"

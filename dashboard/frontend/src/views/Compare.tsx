@@ -14,7 +14,7 @@ import { MetricBarChart, chartColors } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
 import { api } from '../api'
 import { useTheme } from '../theme'
-import type { RunDetail, ScriptRun } from '../types'
+import type { ProfileCheck, ProfilesCheckResponse, RunDetail, ScriptRun } from '../types'
 import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
 
 type Stat = 'mean' | 'p50' | 'p99'
@@ -32,6 +32,7 @@ export default function Compare() {
   const [metric, setMetric] = useState('e2e_ms')
   const [stat, setStat] = useState<Stat>('p50')
   const [load, setLoad] = useState('')
+  const [scorerCheck, setScorerCheck] = useState<ProfilesCheckResponse | null>(null)
 
   useEffect(() => {
     if (!ids.length) return
@@ -40,6 +41,26 @@ export default function Compare() {
       .catch((cause) => setError(String(cause)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
+
+  // Scorer operability for the compared profiles (first run's endpoint; a
+  // real endpoint mismatch is flagged separately by the confounder check).
+  useEffect(() => {
+    if (!details.length) return
+    const first = details[0]
+    const endpoint =
+      first.params?.endpoint ??
+      (first.results?.endpoint?.includes('/v1/audio/speech')
+        ? '/v1/audio/speech'
+        : '/v1/chat/completions')
+    api
+      .profileCheck(endpoint, {
+        namespace: first.params?.namespace ?? 'vllm-omni-validation',
+        epp_deployment: first.params?.epp_deployment ?? 'endpoint-picker-epp',
+        epp_container: first.params?.epp_container ?? 'epp',
+      })
+      .then(setScorerCheck)
+      .catch(() => setScorerCheck(null))
+  }, [details])
 
   const allRuns = useMemo(() => details.flatMap((detail) => detail.results?.runs ?? []), [details])
   const metricKeys = useMemo(
@@ -107,6 +128,28 @@ export default function Compare() {
   if (prompts.length > 1) mismatched.push('prompts')
   if (modalities.length > 1) mismatched.push('output modalities')
   if (sessions.length > 1) mismatched.push(`session settings (lengths ${sessions.join(' vs ')})`)
+
+  // Profiles whose scorers have no usable signal (unsupported / not-useful /
+  // missing prerequisites) make rankings misleading: a "deaf" scorer can win.
+  const inoperableProfiles = new Set<string>()
+  // Limited (partial signal) or unverified scorers keep their rankings but
+  // get an interpretation note.
+  const caveatedProfiles = new Map<string, ProfileCheck>()
+  if (scorerCheck) {
+    for (const detail of details) {
+      for (const run of detail.results?.runs ?? []) {
+        const check = scorerCheck.profiles[run.profile]
+        if (!check || check.severity === 'ok') continue
+        if (check.severity === 'bad') inoperableProfiles.add(run.profile)
+        else caveatedProfiles.set(run.profile, check)
+      }
+    }
+  }
+  if (inoperableProfiles.size) {
+    mismatched.push(`scorer operability (${Array.from(inoperableProfiles).join(', ')})`)
+  }
+  const operabilityBlocked = inoperableProfiles.size > 0
+  const settingsMismatched = mismatched.length > (operabilityBlocked ? 1 : 0)
   const comparable = mismatched.length === 0
 
   // Latency-like metrics: lower is better. Winner highlighting is suppressed
@@ -172,9 +215,20 @@ export default function Compare() {
       {!comparable && (
         <div className="warn-text panel">
           <strong>Not directly comparable:</strong> the selected runs differ in{' '}
-          {mismatched.join(', ')}. Latency depends heavily on input length, output
-          modalities, and session behavior, so differences may reflect those settings
-          rather than the routing profiles — winner highlighting is disabled.
+          {mismatched.join(', ')} — winner highlighting is disabled.
+          {settingsMismatched && (
+            <>
+              {' '}Latency depends heavily on input length, output modalities, and session
+              behavior, so differences may reflect those settings rather than the routing
+              profiles.
+            </>
+          )}
+          {operabilityBlocked && (
+            <>
+              {' '}A scorer with no usable signal for this workload can still appear to win,
+              so its rankings would be misleading.
+            </>
+          )}
           {prompts.length > 1 && (
             <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
               {prompts.map((prompt) => {
@@ -190,6 +244,32 @@ export default function Compare() {
               })}
             </ul>
           )}
+          {inoperableProfiles.size > 0 && (
+            <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+              {Array.from(inoperableProfiles).map((profile) => (
+                <li key={profile} className="muted">
+                  <span className="mono">{profile}</span>:{' '}
+                  {scorerCheck?.profiles[profile]?.reasons.join(' ')}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {caveatedProfiles.size > 0 && (
+        <div className="panel warn-text">
+          <strong>Interpretation caveats</strong>
+          {comparable
+            ? " — rankings stay enabled, but these profiles' scorers operate with a partial or unverified signal for this workload:"
+            : " — these profiles' scorers also operate with a partial or unverified signal (less severe than the blocking issues above):"}
+          <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+            {Array.from(caveatedProfiles.entries()).map(([profile, check]) => (
+              <li key={profile} className="muted">
+                <span className="mono">{profile}</span>: {check.reasons.join(' ')}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

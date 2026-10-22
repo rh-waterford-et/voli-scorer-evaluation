@@ -21,6 +21,7 @@ the benchmark as a subprocess.
 | Compare | Select runs in History → side-by-side matrix for a chosen metric/statistic/load, best value highlighted. |
 | History | Dashboard runs stored under `dashboard/data/runs/`, plus existing `reports/*.json`. Entries can be deleted individually or in bulk; deleting a report removes the file from the working tree (commit to make permanent). |
 | Profile builder | Compose new profiles from scorers already instantiated in the live ConfigMap (with weights and picker), edit or delete existing profiles, preview the exact YAML diff, then apply: backup → patch one ConfigMap key → restart EPP → wait for Ready → verify → **sync the script's profile map**. Failed rollouts offer an explicit revert from the saved backup. "Copy live YAML" helps sync Helm values from the live config. |
+| Scorer caveats | Per-profile operability from `scripts/profile_caveats.json` (curated, endpoint-conditional, keyed by scorer type) plus live prerequisite checks against the EPP Deployment (e.g. the latency predictor sidecars). Badges in New Run, banners on run results, composer hints in the Builder, and Compare winner-suppression for inoperable scorers. |
 
 The builder is the only part that modifies the cluster, and only through the
 explicit preview → confirm → apply chain described below.
@@ -32,6 +33,19 @@ scheduling profiles into `scripts/profile_scorers_local.json` (gitignored,
 takes precedence). This keeps New Run's profile list, `--list-profiles`,
 `--profiles`/`--suite` validation, and result scorer labels aligned with the
 cluster, with no repository churn and no `unknown` labels.
+
+**Scorer caveats:** `scripts/profile_caveats.json` (tracked, team-maintained
+— the source of truth for scorer caveats) records endpoint-conditional
+caveats per scorer type, plus *requirements* that are
+checked live against the EPP Deployment, such as the latency predictor
+sidecars (`llm-d-latency-predictor-training-server` / `-prediction-server`).
+Requirements are matched against specific container components by name or
+image, so unrelated sidecars cannot satisfy them. When the cluster cannot be
+read, requirements report **unknown**, never *missing*. Severities:
+`unsupported`/`not-useful`/`broken` (bad), `limited` (warn), `unknown`.
+Only *bad* severity suppresses Compare winner highlighting; *warn*/*unknown*
+show an informational interpretation note there instead. Re-verify the
+file after router upgrades and update `verified_as_of`; the UI displays it.
 
 The profile builder (compose scorers/weights, apply to the cluster) is planned
 as a second stage and not included yet.
@@ -165,7 +179,8 @@ subprocess is not tracked); avoid restarting the backend mid-run.
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/profiles` | Built-in profile map (no cluster access). |
+| `GET /api/profiles` | Script profile map (local synced file if present, else tracked default). |
+| `GET /api/profiles/check?endpoint=…` | Per-profile scorer operability: curated caveats + live prerequisite checks (read-only). |
 | `GET /api/profiles/cluster?namespace=…` | Live EPP profiles from the ConfigMap (read-only). |
 | `POST /api/runs` | Start a run; body `{name?, params}`. |
 | `POST /api/runs/preview` | Show the command lines without running. |

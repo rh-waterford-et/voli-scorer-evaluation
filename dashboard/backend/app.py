@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 import bench
 import builder
+import caveats as caveats_module
 import cluster
 import runner
 from paths import FRONTEND_DIST
@@ -66,6 +67,71 @@ def profiles_cluster(
 ):
     """Live EPP scheduling profiles. Read-only: `oc get deployment/configmap`."""
     return cluster.discover_profiles(namespace, epp_deployment, epp_container, configmap, config_key)
+
+
+@app.get("/api/profiles/check")
+def profiles_check(
+    endpoint: str,
+    namespace: str = "vllm-omni-validation",
+    epp_deployment: str = "endpoint-picker-epp",
+    epp_container: str = "epp",
+):
+    """Scorer operability per profile: curated caveats (endpoint-conditional)
+    plus live requirement checks against the EPP Deployment.
+
+    Profiles are resolved from the script map and, when cluster access is
+    available, the live ConfigMap (live takes precedence). Without cluster
+    access, requirements report "unknown" -- never "missing".
+    """
+    caveats = caveats_module.load_caveats()
+
+    profile_types: dict[str, list[str]] = {}
+    from stream_metrics import ENDPOINTS, load_profile_scorers
+
+    for name, description in load_profile_scorers().items():
+        profile_types[name] = caveats_module.scorer_types_from_description(description)
+
+    deployment = None
+    cluster_access = "ok"
+    cluster_error = None
+    try:
+        fetched = cluster.fetch_config(namespace, epp_deployment, epp_container)
+        deployment = fetched["deployment"]
+        state = builder.build_state(fetched)
+        type_of = {instance["name"]: instance["type"] for instance in state["instances"]}
+        for profile in state["profiles"]:
+            profile_types[profile["name"]] = [
+                type_of.get(scorer["name"], scorer["name"])
+                for scorer in profile.get("scorers") or []
+            ]
+    except HTTPException as error:
+        cluster_access = "unavailable"
+        cluster_error = str(error.detail)
+
+    profiles = {
+        name: caveats_module.evaluate_types(types, endpoint, caveats, deployment)
+        for name, types in profile_types.items()
+    }
+
+    # Type-keyed, cross-endpoint view for the Builder's composer.
+    used_types = {scorer_type for types in profile_types.values() for scorer_type in types}
+    scorer_entries = {}
+    for scorer_type in sorted(used_types | set((caveats.get("scorers") or {}).keys())):
+        entry = (caveats.get("scorers") or {}).get(scorer_type)
+        if not isinstance(entry, dict):
+            continue
+        scorer_entries[scorer_type] = caveats_module.evaluate_scorer_across_endpoints(
+            entry, list(ENDPOINTS), deployment
+        )
+
+    return {
+        "verified_as_of": caveats.get("verified_as_of"),
+        "cluster_access": cluster_access,
+        "cluster_error": cluster_error,
+        "endpoint": endpoint,
+        "profiles": profiles,
+        "scorers": scorer_entries,
+    }
 
 
 # -- profile builder --------------------------------------------------------------

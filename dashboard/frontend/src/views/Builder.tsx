@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import type { BuilderBackup, BuilderJob, BuilderPreview, BuilderProfile, BuilderState } from '../types'
+import type {
+  BuilderBackup,
+  BuilderJob,
+  BuilderPreview,
+  BuilderProfile,
+  BuilderState,
+  ProfilesCheckResponse,
+} from '../types'
 import { fmtWhen } from '../format'
 
 type Mode = 'none' | 'create' | 'edit' | 'delete'
@@ -78,6 +85,7 @@ export default function Builder() {
   const [backups, setBackups] = useState<BuilderBackup[]>([])
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [scorerCaveats, setScorerCaveats] = useState<ProfilesCheckResponse['scorers'] | null>(null)
 
   const loadState = useCallback(async () => {
     setLoading(true)
@@ -111,6 +119,18 @@ export default function Builder() {
     loadBackups()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Type-keyed scorer caveats for the composer (cross-endpoint, worst case).
+  useEffect(() => {
+    api
+      .profileCheck('/v1/audio/speech', {
+        namespace,
+        epp_deployment: deployment,
+        epp_container: container,
+      })
+      .then((check) => setScorerCaveats(check.scorers))
+      .catch(() => setScorerCaveats(null))
+  }, [namespace, deployment, container])
 
   // Poll the running job until it finishes.
   useEffect(() => {
@@ -493,6 +513,27 @@ export default function Builder() {
             </button>
             <button onClick={resetComposer}>Cancel</button>
           </div>
+          {(() => {
+            const notes = rows
+              .map((row) => {
+                const instance = state?.instances.find((item) => item.name === row.name)
+                if (!instance) return null
+                const entry = scorerCaveats?.[instance.type]
+                return entry && entry.severity !== 'ok' ? { instance, entry } : null
+              })
+              .filter((value): value is NonNullable<typeof value> => value != null)
+            if (!notes.length) return null
+            return (
+              <div className="warn-text">
+                {notes.map((note) => (
+                  <div key={note.instance.name}>
+                    <span className="mono">{note.instance.name}</span> ({note.instance.type}):{' '}
+                    {note.entry.reasons.join(' ')}
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
           <p className="muted">
             Scorers combine as a weighted sum: Σ(score × weight). Only plugin instances already
             instantiated in the live config are offered.

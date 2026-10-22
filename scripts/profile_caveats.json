@@ -1,0 +1,93 @@
+{
+  "verified_as_of": "2026-10-22",
+  "note": "Team-maintained source of truth for scorer caveats, tracked in git. Keyed by scorer TYPE so combined profiles inherit caveats automatically. 'caveats' are endpoint-conditional curated knowledge; 'requirements' are checked live against the EPP Deployment when cluster access is available (unavailable cluster access reports unknown, never missing). Re-verify after router upgrades and edit this file.",
+  "scorers": {
+    "latency-scorer": {
+      "requirements": [
+        {
+          "kind": "sidecars",
+          "components": [
+            {
+              "name": "latency predictor training server (localhost:8000)",
+              "match": "llm-d-latency-predictor-training-server"
+            },
+            {
+              "name": "latency predictor prediction server (localhost:8001)",
+              "match": "llm-d-latency-predictor-prediction-server"
+            }
+          ]
+        }
+      ],
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "unsupported",
+          "reason": "Router token estimator cannot process /v1/audio/speech request bodies, so the predictor receives no training data (re-verified against v0.11.0, v1.0.0 and main on 2026-10-22)."
+        }
+      ]
+    },
+    "prefix-cache-scorer": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "unsupported",
+          "reason": "Token estimator gap: no usable prefix-match data for TTS prompts, so cache reuse cannot be compared."
+        }
+      ]
+    },
+    "context-length-aware": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "unsupported",
+          "reason": "TTS tokenization fails, so the input length reads as zero and length-based decisions are meaningless."
+        }
+      ]
+    },
+    "token-load-scorer": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "unsupported",
+          "reason": "Missing TTS input-token estimate makes the token-load comparison across pods unreliable."
+        }
+      ]
+    },
+    "no-hit-lru-scorer": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "limited",
+          "reason": "Without prefix data every request is treated as cold: this exercises LRU spreading only, not cache-aware routing."
+        }
+      ]
+    },
+    "mm-embeddings-cache-scorer": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "not-useful",
+          "reason": "Text-input TTS produces audio but supplies no multimodal input media, so there are no embeddings to reuse."
+        }
+      ]
+    },
+    "endpoint-attribute-weight-scorer": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech", "/v1/chat/completions"],
+          "status": "limited",
+          "reason": "Applies fixed label-based preferences only, and both current TTS pods share the same baseline-model label, so it cannot distinguish them."
+        }
+      ]
+    },
+    "kv-cache-utilization-scorer": {
+      "caveats": [
+        {
+          "endpoints": ["/v1/audio/speech"],
+          "status": "limited",
+          "reason": "Reads stage-0 KV usage only, which may not reflect whole-pipeline load; treat results as exploratory."
+        }
+      ]
+    }
+  }
+}

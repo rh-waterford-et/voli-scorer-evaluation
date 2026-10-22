@@ -204,6 +204,32 @@ export interface ProfileListResponse {
   profiles: ProfileInfo[]
 }
 
+// -- scorer caveats / operability --------------------------------------------------
+
+export type CheckSeverity = 'ok' | 'warn' | 'bad' | 'unknown'
+
+export interface ProfileCheck {
+  severity: CheckSeverity
+  status: string
+  statuses: string[]
+  reasons: string[]
+  scorer_types: string[]
+}
+
+export interface ScorerCheck {
+  severity: CheckSeverity
+  reasons: string[]
+}
+
+export interface ProfilesCheckResponse {
+  verified_as_of: string | null
+  cluster_access: 'ok' | 'unavailable'
+  cluster_error: string | null
+  endpoint: string
+  profiles: Record<string, ProfileCheck>
+  scorers: Record<string, ScorerCheck>
+}
+
 export interface RunEvent {
   kind: string
   data: any

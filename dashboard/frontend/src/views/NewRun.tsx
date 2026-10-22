@@ -2,7 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import HelpHint from '../components/HelpHint'
-import type { ClusterProfiles, ProfileInfo } from '../types'
+import type {
+  ClusterProfiles,
+  ProfileCheck,
+  ProfileInfo,
+  ProfileListResponse,
+  ProfilesCheckResponse,
+} from '../types'
 
 interface Load {
   iterations: number
@@ -28,6 +34,23 @@ function profileSubText(profile: ProfileInfo): string {
   return scorerText || 'no scorers'
 }
 
+function caveatBadge(check?: ProfileCheck) {
+  if (!check || check.severity === 'ok') return null
+  const label =
+    check.severity === 'bad'
+      ? check.status
+      : check.severity === 'warn'
+        ? 'limited'
+        : 'unverified'
+  const cls =
+    check.severity === 'bad' ? 'badge bad' : check.severity === 'warn' ? 'badge warn' : 'badge'
+  return (
+    <span className={cls} title={check.reasons.join('\n')}>
+      {label}
+    </span>
+  )
+}
+
 export default function NewRun() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -47,6 +70,7 @@ export default function NewRun() {
     map_sync_source: string | null
     map_profiles: number | null
   } | null>(null)
+  const [checks, setChecks] = useState<ProfilesCheckResponse | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [clusterInfo, setClusterInfo] = useState<ClusterProfiles | null>(null)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
@@ -93,6 +117,23 @@ export default function NewRun() {
     const preset = searchParams.get('profile')
     if (preset) setSelectedProfiles(new Set([preset]))
   }, [searchParams])
+
+  // Scorer operability for the chosen endpoint (curated caveats + live
+  // prerequisite checks). Debounced: endpoint/namespace changes are cheap,
+  // but the check reads the cluster when oc is available.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      api
+        .profileCheck(endpoint, {
+          namespace,
+          epp_deployment: eppDeployment,
+          epp_container: eppContainer,
+        })
+        .then(setChecks)
+        .catch(() => setChecks(null))
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [endpoint, namespace, eppDeployment, eppContainer])
 
   const loadFromCluster = async () => {
     setLoadingProfiles(true)
@@ -333,6 +374,28 @@ export default function NewRun() {
           </p>
         )}
         {profileError && <div className="error-text">{profileError}</div>}
+        {checks && (
+          <p className="muted" style={{ marginTop: -6 }}>
+            Caveats from <code>scripts/profile_caveats.json</code> (verified{' '}
+            {checks.verified_as_of ?? '—'}) · prerequisites{' '}
+            {checks.cluster_access === 'ok'
+              ? 'checked against the live EPP deployment'
+              : 'not verified — cluster state unavailable'}
+            {(() => {
+              const affected = Array.from(selectedProfiles).filter(
+                (name) => checks.profiles[name]?.severity !== undefined && checks.profiles[name].severity !== 'ok',
+              )
+              return affected.length ? (
+                <span className="warn-text">
+                  {' '}
+                  {affected.length} of the selected profile
+                  {affected.length > 1 ? 's' : ''} ha
+                  {affected.length > 1 ? 've' : 's'} caveats for this endpoint.
+                </span>
+              ) : null
+            })()}
+          </p>
+        )}
         <div className="profile-list">
           {visibleProfiles.map((profile) => (
             <label key={profile.name} className="profile-item">
@@ -344,6 +407,7 @@ export default function NewRun() {
               <span className={`mono${profile.name === 'default' ? ' muted' : ''}`}>
                 {profile.name}
               </span>
+              {caveatBadge(checks?.profiles[profile.name])}
               <span className="muted profile-scorers">{profileSubText(profile)}</span>
             </label>
           ))}

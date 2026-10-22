@@ -5,8 +5,10 @@ import type {
   BuilderProfile,
   BuilderState,
   ClusterProfiles,
+  ProfileCheck,
   ProfileInfo,
   ProfileListResponse,
+  ProfilesCheckResponse,
   RunDetail,
   RunMeta,
 } from './types'
@@ -76,6 +78,14 @@ export const api = {
     postJSON<{ run_id: string; profiles: { name: string; argv: string[] }[] }>('/api/runs/preview', body),
 
   builtinProfiles: () => getJSON<ProfileListResponse>('/api/profiles'),
+
+  profileCheck: (
+    endpoint: string,
+    query: { namespace: string; epp_deployment: string; epp_container: string },
+  ) => {
+    const params = new URLSearchParams({ endpoint, ...query })
+    return getJSON<ProfilesCheckResponse>(`/api/profiles/check?${params.toString()}`)
+  },
 
   clusterProfiles: (query: {
     namespace: string

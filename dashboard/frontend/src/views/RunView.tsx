@@ -4,7 +4,7 @@ import SortTable, { type Column } from '../components/SortTable'
 import { EppScoreView, Histogram, MetricBarChart } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
 import { api, openRunEvents } from '../api'
-import type { RequestResult, RunDetail, ScriptRun } from '../types'
+import type { ProfileCheck, RequestResult, RunDetail, ScriptRun } from '../types'
 import {
   METRIC_LABELS,
   METRIC_ORDER,
@@ -195,6 +195,7 @@ export default function RunView() {
   const [chartMetric, setChartMetric] = useState('e2e_ms')
   const [histoMetric, setHistoMetric] = useState('e2e_ms')
   const [histoRunId, setHistoRunId] = useState('')
+  const [caveatNotes, setCaveatNotes] = useState<{ profile: string; check: ProfileCheck }[]>([])
   const logRef = useRef<HTMLPreElement | null>(null)
   const sourceRef = useRef<EventSource | null>(null)
 
@@ -211,6 +212,40 @@ export default function RunView() {
   useEffect(() => {
     load()
   }, [load])
+
+  // Scorer caveats for the profiles in this run's results.
+  useEffect(() => {
+    if (!detail || isActive(detail.status) || !detail.results?.runs?.length) return
+    const params = detail.params
+    const endpoint =
+      params?.endpoint ??
+      (detail.results.endpoint?.includes('/v1/audio/speech')
+        ? '/v1/audio/speech'
+        : '/v1/chat/completions')
+    let cancelled = false
+    api
+      .profileCheck(endpoint, {
+        namespace: params?.namespace ?? 'vllm-omni-validation',
+        epp_deployment: params?.epp_deployment ?? 'endpoint-picker-epp',
+        epp_container: params?.epp_container ?? 'epp',
+      })
+      .then((check) => {
+        if (cancelled) return
+        const seen = new Set<string>()
+        const notes: { profile: string; check: ProfileCheck }[] = []
+        for (const run of detail.results?.runs ?? []) {
+          if (seen.has(run.profile)) continue
+          seen.add(run.profile)
+          const entry = check.profiles[run.profile]
+          if (entry && entry.severity !== 'ok') notes.push({ profile: run.profile, check: entry })
+        }
+        setCaveatNotes(notes)
+      })
+      .catch(() => setCaveatNotes([]))
+    return () => {
+      cancelled = true
+    }
+  }, [detail])
 
   const status = detail?.status
   useEffect(() => {
@@ -414,6 +449,21 @@ export default function RunView() {
 
       {detail.source === 'dashboard' && !isActive(detail.status) && logLines.length === 0 && detail.status !== 'completed' && (
         <div className="panel muted">This run has no captured log (it may have failed before starting).</div>
+      )}
+
+      {caveatNotes.length > 0 && (
+        <div className="warn-text panel">
+          <strong>Scorer caveats apply to profiles in this run:</strong>
+          <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+            {caveatNotes.map((note) => (
+              <li key={note.profile}>
+                <span className="mono">{note.profile}</span> — {note.check.reasons.join(' ')}
+              </li>
+            ))}
+          </ul>
+          Measurements are still valid as client-observed behavior, but routing decisions for
+          these profiles may not reflect the scorers' intended signals.
+        </div>
       )}
 
       {runs.length > 0 && (
