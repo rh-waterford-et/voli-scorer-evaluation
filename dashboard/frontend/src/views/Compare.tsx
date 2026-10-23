@@ -207,29 +207,37 @@ export default function Compare() {
     )
     .map(({ detail, index }) => shortLabel(detail, index))
 
-  // Latency-like metrics: lower is better. Winner highlighting is suppressed
-  // while the runs differ in a confounder (prompt, session, model, ...).
-  // A profile only has a "winner" when it has values in two or more runs at
-  // the selected load; when no profile does (typical one-profile-per-run
-  // comparisons), the single best value overall is highlighted instead.
+  // The profile is the comparison unit; runs are measurement occasions
+  // within a profile. A profile measured in several runs is represented by
+  // the MEAN of its values (the minimum would cherry-pick the luckiest
+  // repetition); its spread is shown in the table. Winner highlighting is
+  // suppressed while the runs differ in a confounder.
+  const valuesOf = (profile: string): number[] =>
+    details
+      .map((detail) => cellValue(detail, profile))
+      .filter((value): value is number => value != null)
+
+  const representativeOf = (profile: string): number | null => {
+    const values = valuesOf(profile)
+    if (!values.length) return null
+    if (values.length === 1) return values[0]
+    return values.reduce((total, value) => total + value, 0) / values.length
+  }
+
+  const repeatedProfiles = profiles.filter((profile) => valuesOf(profile).length > 1)
+
   const isLowerBetter = !metric.startsWith('unknown')
-  const bestByProfile = new Map<string, number>()
-  let globalBestValue: number | null = null
+  const winningProfiles = new Set<string>()
   if (isLowerBetter && comparable) {
+    let best: number | null = null
     for (const profile of profiles) {
-      const values = details
-        .map((detail) => cellValue(detail, profile))
-        .filter((value): value is number => value != null)
-      if (values.length > 1) bestByProfile.set(profile, Math.min(...values))
+      const value = representativeOf(profile)
+      if (value != null && (best == null || value < best)) best = value
     }
-    if (!bestByProfile.size) {
+    if (best != null) {
       for (const profile of profiles) {
-        for (const detail of details) {
-          const value = cellValue(detail, profile)
-          if (value != null && (globalBestValue == null || value < globalBestValue)) {
-            globalBestValue = value
-          }
-        }
+        const value = representativeOf(profile)
+        if (value != null && Math.abs(value - best) < 1e-9) winningProfiles.add(profile)
       }
     }
   }
@@ -238,33 +246,23 @@ export default function Compare() {
     '#3d7dc8', '#c25b4e', '#5a8a5c', '#8a6bb5', '#b58a3d',
     '#4fa3a5', '#c778a6', '#7a8a3d', '#a5506e', '#5c6bc4',
   ]
-  const chartData = profiles.map((profile) => {
+  // Chart data: one row per profile; slot0..slotN hold that profile's values
+  // across runs at the selected load (color = profile, later runs rendered
+  // at reduced opacity), with the run label kept for the tooltip.
+  const maxSlots = Math.max(0, ...profiles.map((profile) => valuesOf(profile).length))
+  const chartRows = profiles.map((profile) => {
     const row: Record<string, string | number | null> = { profile }
+    let slot = 0
     details.forEach((detail, index) => {
-      row[shortLabel(detail, index)] = cellValue(detail, profile)
+      const value = cellValue(detail, profile)
+      if (value != null) {
+        row[`slot${slot}`] = value
+        row[`run${slot}`] = shortLabel(detail, index)
+        slot += 1
+      }
     })
     return row
   })
-  const chartBars = details.map((detail, index) => ({
-    key: shortLabel(detail, index),
-    color: palette[index % palette.length],
-  }))
-  // Chart series dimension: when some selected profile appears in two or
-  // more runs at this load, bars are colored by RUN (repetition comparison,
-  // side-by-side bars per profile). Otherwise the run dimension carries no
-  // information, so bars are colored by PROFILE instead (tournament
-  // comparison, including profiles drawn from different runs), with a legend
-  // naming the profiles.
-  const runSeriesMode = profiles.some(
-    (profile) => details.filter((detail) => findRun(detail, profile) != null).length > 1,
-  )
-  const profileSeriesData = profiles.map((profile) => ({
-    profile,
-    value: details.reduce<number | null>(
-      (found, detail) => found ?? cellValue(detail, profile),
-      null,
-    ),
-  }))
 
   // Scorer composition for a profile row (from any selected run that has it).
   const scorerOf = (profile: string): string | null => {
@@ -382,6 +380,16 @@ export default function Compare() {
       )}
 
       <div className="panel">
+        <p className="muted" style={{ marginTop: 0 }}>
+          Comparing {profiles.length} profile{profiles.length === 1 ? '' : 's'} from{' '}
+          {details.length} run{details.length === 1 ? '' : 's'}
+          {repeatedProfiles.length > 0
+            ? `, of which ${repeatedProfiles.length} ${
+                repeatedProfiles.length === 1 ? 'is' : 'are'
+              } measured in more than one run`
+            : ''}
+          .
+        </p>
         <div className="actions">
           <label>
             Metric
@@ -426,20 +434,27 @@ export default function Compare() {
             </thead>
             <tbody>
               {profiles.map((profile) => {
-                const best = bestByProfile.get(profile)
                 const scorer = scorerOf(profile)
+                const values = valuesOf(profile)
+                const repeated = values.length > 1
+                const mean = repeated
+                  ? values.reduce((total, value) => total + value, 0) / values.length
+                  : null
+                const spread = repeated ? Math.max(...values) - Math.min(...values) : null
                 return (
                   <tr key={profile}>
-                    <td className="mono">
+                    <td className={`mono${winningProfiles.has(profile) ? ' best' : ''}`}>
                       {profile}
                       {scorer && <div className="cell-sub muted">{scorer}</div>}
+                      {repeated && mean != null && spread != null && (
+                        <div className="cell-sub muted">
+                          mean {fmtMs(mean)} · spread {fmtMs(spread)} across {values.length} runs
+                        </div>
+                      )}
                     </td>
                     {details.map((detail) => {
                       const value = cellValue(detail, profile)
-                      const isBest =
-                        value != null &&
-                        ((best != null && Math.abs(value - best) < 1e-9) ||
-                          (globalBestValue != null && Math.abs(value - globalBestValue) < 1e-9))
+                      const isBest = value != null && !repeated && winningProfiles.has(profile)
                       return (
                         <td key={detail.id} className={`num${isBest ? ' best' : ''}`}>
                           {fmtMs(value)}
@@ -454,17 +469,13 @@ export default function Compare() {
         </div>
         <p className="muted">
           {comparable ? (
-            bestByProfile.size ? (
-              <>
-                Highlighted cells are the best (lowest) value for that profile across runs at
-                load {load || '—'}.
-              </>
-            ) : (
-              <>
-                No profile appears in more than one run at this load, so the single best value
-                overall is highlighted.
-              </>
-            )
+            <>
+              The best profile is highlighted in the Profile column
+              {repeatedProfiles.length > 0
+                ? '; profiles measured in more than one run are ranked by their mean (shown under the profile name)'
+                : ''}
+              .
+            </>
           ) : (
             <>
               Winner highlighting is disabled because the runs differ in {mismatched.join(', ')}.
@@ -479,94 +490,105 @@ export default function Compare() {
           {METRIC_LABELS[metric] ?? metric} · {stat} · load {load || '—'}
         </h2>
         <MetricBarChartWrapper
-          chartData={chartData}
-          chartBars={chartBars}
+          chartRows={chartRows}
+          maxSlots={maxSlots}
+          palette={palette}
           metric={metric}
           stat={stat}
-          runSeriesMode={runSeriesMode}
-          profileSeriesData={profileSeriesData}
-          palette={palette}
         />
       </div>
     </div>
   )
 }
 
+// Custom tooltip: profile name on top; a single measurement shows just the
+// metric value, repeated measurements list one line per run.
+function CompareTooltip({
+  active,
+  payload,
+  label,
+  colors,
+  metricLabel,
+}: {
+  active?: boolean
+  payload?: any[]
+  label?: string | number
+  colors: ReturnType<typeof chartColors>
+  metricLabel: string
+}) {
+  if (!active || !payload?.length) return null
+  const row = payload[0]?.payload
+  if (!row) return null
+  const slots: { value: number; run: string }[] = []
+  let index = 0
+  while (row[`slot${index}`] != null) {
+    slots.push({ value: Number(row[`slot${index}`]), run: String(row[`run${index}`]) })
+    index += 1
+  }
+  if (!slots.length) return null
+  return (
+    <div style={{ ...colors.tooltip, padding: '8px 10px' }}>
+      <div style={colors.tooltipLabel}>{label}</div>
+      {slots.length === 1 ? (
+        <div>{`${metricLabel}: ${slots[0].value.toFixed(0)} ms`}</div>
+      ) : (
+        slots.map((slot) => <div key={slot.run}>{`${slot.run}: ${slot.value.toFixed(0)} ms`}</div>)
+      )}
+    </div>
+  )
+}
+
 function MetricBarChartWrapper({
-  chartData,
-  chartBars,
+  chartRows,
+  maxSlots,
+  palette,
   metric,
   stat,
-  runSeriesMode,
-  profileSeriesData,
-  palette,
 }: {
-  chartData: Record<string, string | number | null>[]
-  chartBars: { key: string; color: string }[]
+  chartRows: Record<string, string | number | null>[]
+  maxSlots: number
+  palette: string[]
   metric: string
   stat: Stat
-  runSeriesMode: boolean
-  profileSeriesData: { profile: string; value: number | null }[]
-  palette: string[]
 }) {
   const { theme } = useTheme()
   const colors = chartColors(theme)
   const seriesName = `${METRIC_LABELS[metric] ?? metric} ${stat}`
-  if (runSeriesMode ? !chartData.length : !profileSeriesData.length) {
-    return <div className="muted">No data.</div>
-  }
+  if (!chartRows.length || maxSlots < 1) return <div className="muted">No data.</div>
   return (
     <ResponsiveContainer width="100%" height={340}>
-      <BarChart
-        data={runSeriesMode ? chartData : profileSeriesData}
-        margin={{ top: 8, right: 16, left: 8, bottom: 56 }}
-      >
+      <BarChart data={chartRows} margin={{ top: 8, right: 16, left: 8, bottom: 56 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
         <XAxis dataKey="profile" angle={-30} textAnchor="end" height={80} interval={0} stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
         <YAxis stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
         <Tooltip
           cursor={false}
-          formatter={(value: any) => (value == null ? '—' : `${Number(value).toFixed(0)} ms`)}
-          contentStyle={colors.tooltip}
-          labelStyle={colors.tooltipLabel}
-          itemStyle={colors.tooltipItem}
+          content={<CompareTooltip colors={colors} metricLabel={seriesName} />}
         />
-        {runSeriesMode ? (
-          <Legend
-            payload={chartBars.map((bar) => ({
-              value: bar.key,
-              type: 'rect',
-              color: bar.color,
-              id: bar.key,
-            }))}
-          />
-        ) : (
-          <Legend
-            payload={profileSeriesData.map((entry, index) => ({
-              value: entry.profile,
-              type: 'rect',
-              color: palette[index % palette.length],
-              id: entry.profile,
-            }))}
-          />
-        )}
-        {runSeriesMode ? (
-          chartBars.map((bar) => (
-            <Bar
-              key={bar.key}
-              dataKey={bar.key}
-              name={seriesName}
-              fill={bar.color}
-              activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }}
-            />
-          ))
-        ) : (
-          <Bar dataKey="value" name={seriesName} activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }}>
-            {profileSeriesData.map((entry, index) => (
-              <Cell key={entry.profile} fill={palette[index % palette.length]} />
+        <Legend
+          payload={chartRows.map((row, index) => ({
+            value: String(row.profile),
+            type: 'rect',
+            color: palette[index % palette.length],
+            id: String(row.profile),
+          }))}
+        />
+        {Array.from({ length: maxSlots }, (_, slot) => (
+          <Bar
+            key={slot}
+            dataKey={`slot${slot}`}
+            name={seriesName}
+            activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }}
+          >
+            {chartRows.map((row, rowIndex) => (
+              <Cell
+                key={String(row.profile)}
+                fill={palette[rowIndex % palette.length]}
+                fillOpacity={slot === 0 ? 1 : Math.max(0.4, 1 - slot * 0.35)}
+              />
             ))}
           </Bar>
-        )}
+        ))}
       </BarChart>
     </ResponsiveContainer>
   )
