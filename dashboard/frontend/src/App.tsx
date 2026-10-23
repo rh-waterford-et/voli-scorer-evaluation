@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import pkg from '../package.json'
 import { useTheme } from './theme'
 
 export default function App() {
@@ -27,6 +28,9 @@ export default function App() {
         >
           {theme === 'dark' ? '☀ light' : '🌙 dark'}
         </button>
+        <span className="version-label" title="Dashboard version — include it when reporting issues">
+          v{pkg.version}
+        </span>
       </nav>
       <main className="container">
         <Outlet />

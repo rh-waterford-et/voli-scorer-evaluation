@@ -1,4 +1,5 @@
 import React from 'react'
+import pkg from '../../package.json'
 
 interface State {
   error: Error | null
@@ -30,8 +31,8 @@ export default class ErrorBoundary extends React.Component<
               {this.state.error.toString()}
             </pre>
             <p className="muted">
-              Check the browser console for the stack trace, then reload. Stored run data is
-              unaffected — History and the backend keep working.
+              Dashboard version: v{pkg.version}. Check the browser console for the stack trace,
+              then reload. Stored run data is unaffected — History and the backend keep working.
             </p>
             <button className="primary" onClick={() => window.location.reload()}>
               Reload
