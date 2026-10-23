@@ -8,12 +8,14 @@ import RunView from './views/RunView'
 import Compare from './views/Compare'
 import Builder from './views/Builder'
 import { ThemeProvider } from './theme'
+import ErrorBoundary from './components/ErrorBoundary'
 import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ThemeProvider>
-      <BrowserRouter>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <BrowserRouter>
         <Routes>
           <Route path="/" element={<App />}>
             <Route index element={<Navigate to="/history" replace />} />
@@ -25,6 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           </Route>
         </Routes>
       </BrowserRouter>
-    </ThemeProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   </React.StrictMode>,
 )

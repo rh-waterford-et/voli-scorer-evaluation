@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   ResponsiveContainer,
   Tooltip,
@@ -233,6 +234,10 @@ export default function Compare() {
     }
   }
 
+  const palette = [
+    '#3d7dc8', '#c25b4e', '#5a8a5c', '#8a6bb5', '#b58a3d',
+    '#4fa3a5', '#c778a6', '#7a8a3d', '#a5506e', '#5c6bc4',
+  ]
   const chartData = profiles.map((profile) => {
     const row: Record<string, string | number | null> = { profile }
     details.forEach((detail, index) => {
@@ -242,8 +247,33 @@ export default function Compare() {
   })
   const chartBars = details.map((detail, index) => ({
     key: shortLabel(detail, index),
-    color: ['#3d7dc8', '#c25b4e', '#5a8a5c', '#8a6bb5', '#b58a3d'][index % 5],
+    color: palette[index % palette.length],
   }))
+  // Chart series dimension: when some selected profile appears in two or
+  // more runs at this load, bars are colored by RUN (repetition comparison,
+  // side-by-side bars per profile). Otherwise the run dimension carries no
+  // information, so bars are colored by PROFILE instead (tournament
+  // comparison, including profiles drawn from different runs), with a legend
+  // naming the profiles.
+  const runSeriesMode = profiles.some(
+    (profile) => details.filter((detail) => findRun(detail, profile) != null).length > 1,
+  )
+  const profileSeriesData = profiles.map((profile) => ({
+    profile,
+    value: details.reduce<number | null>(
+      (found, detail) => found ?? cellValue(detail, profile),
+      null,
+    ),
+  }))
+
+  // Scorer composition for a profile row (from any selected run that has it).
+  const scorerOf = (profile: string): string | null => {
+    for (const detail of details) {
+      const run = selectedRunsOf(detail).find((entry) => entry.profile === profile)
+      if (run) return run.scorer
+    }
+    return null
+  }
 
   if (!items.length) {
     return (
@@ -397,9 +427,13 @@ export default function Compare() {
             <tbody>
               {profiles.map((profile) => {
                 const best = bestByProfile.get(profile)
+                const scorer = scorerOf(profile)
                 return (
                   <tr key={profile}>
-                    <td className="mono">{profile}</td>
+                    <td className="mono">
+                      {profile}
+                      {scorer && <div className="cell-sub muted">{scorer}</div>}
+                    </td>
                     {details.map((detail) => {
                       const value = cellValue(detail, profile)
                       const isBest =
@@ -444,7 +478,15 @@ export default function Compare() {
         <h2>
           {METRIC_LABELS[metric] ?? metric} · {stat} · load {load || '—'}
         </h2>
-        <MetricBarChartWrapper chartData={chartData} chartBars={chartBars} metric={metric} stat={stat} />
+        <MetricBarChartWrapper
+          chartData={chartData}
+          chartBars={chartBars}
+          metric={metric}
+          stat={stat}
+          runSeriesMode={runSeriesMode}
+          profileSeriesData={profileSeriesData}
+          palette={palette}
+        />
       </div>
     </div>
   )
@@ -455,31 +497,76 @@ function MetricBarChartWrapper({
   chartBars,
   metric,
   stat,
+  runSeriesMode,
+  profileSeriesData,
+  palette,
 }: {
   chartData: Record<string, string | number | null>[]
   chartBars: { key: string; color: string }[]
   metric: string
   stat: Stat
+  runSeriesMode: boolean
+  profileSeriesData: { profile: string; value: number | null }[]
+  palette: string[]
 }) {
   const { theme } = useTheme()
   const colors = chartColors(theme)
-  if (!chartData.length) return <div className="muted">No data.</div>
+  const seriesName = `${METRIC_LABELS[metric] ?? metric} ${stat}`
+  if (runSeriesMode ? !chartData.length : !profileSeriesData.length) {
+    return <div className="muted">No data.</div>
+  }
   return (
     <ResponsiveContainer width="100%" height={340}>
-      <BarChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 56 }}>
+      <BarChart
+        data={runSeriesMode ? chartData : profileSeriesData}
+        margin={{ top: 8, right: 16, left: 8, bottom: 56 }}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
         <XAxis dataKey="profile" angle={-30} textAnchor="end" height={80} interval={0} stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
         <YAxis stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
-        <Tooltip formatter={(value: any) => (value == null ? '—' : `${Number(value).toFixed(0)} ms`)} contentStyle={colors.tooltip} labelStyle={colors.tooltipLabel} />
-        <Legend />
-        {chartBars.map((bar) => (
-          <Bar
-            key={bar.key}
-            dataKey={bar.key}
-            name={`${bar.key} · ${METRIC_LABELS[metric] ?? metric} ${stat}`}
-            fill={bar.color}
+        <Tooltip
+          cursor={false}
+          formatter={(value: any) => (value == null ? '—' : `${Number(value).toFixed(0)} ms`)}
+          contentStyle={colors.tooltip}
+          labelStyle={colors.tooltipLabel}
+          itemStyle={colors.tooltipItem}
+        />
+        {runSeriesMode ? (
+          <Legend
+            payload={chartBars.map((bar) => ({
+              value: bar.key,
+              type: 'rect',
+              color: bar.color,
+              id: bar.key,
+            }))}
           />
-        ))}
+        ) : (
+          <Legend
+            payload={profileSeriesData.map((entry, index) => ({
+              value: entry.profile,
+              type: 'rect',
+              color: palette[index % palette.length],
+              id: entry.profile,
+            }))}
+          />
+        )}
+        {runSeriesMode ? (
+          chartBars.map((bar) => (
+            <Bar
+              key={bar.key}
+              dataKey={bar.key}
+              name={seriesName}
+              fill={bar.color}
+              activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }}
+            />
+          ))
+        ) : (
+          <Bar dataKey="value" name={seriesName} activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }}>
+            {profileSeriesData.map((entry, index) => (
+              <Cell key={entry.profile} fill={palette[index % palette.length]} />
+            ))}
+          </Bar>
+        )}
       </BarChart>
     </ResponsiveContainer>
   )

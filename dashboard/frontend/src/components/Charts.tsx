@@ -24,15 +24,19 @@ export function chartColors(theme: Theme) {
         grid: '#2c333b',
         axis: '#4a545e',
         text: '#98a2ac',
+        activeBar: '#e4e8ec',
         tooltip: { background: '#171c21', border: '1px solid #2c333b', borderRadius: 4, color: '#e4e8ec' } as const,
         tooltipLabel: { color: '#98a2ac' } as const,
+        tooltipItem: { color: '#e4e8ec' } as const,
       }
     : {
         grid: '#e5e9ee',
         axis: '#c3cbd3',
         text: '#5c6670',
+        activeBar: '#1b1f23',
         tooltip: { background: '#ffffff', border: '1px solid #d9dee3', borderRadius: 4, color: '#1b1f23' } as const,
         tooltipLabel: { color: '#5c6670' } as const,
+        tooltipItem: { color: '#1b1f23' } as const,
       }
 }
 
@@ -60,10 +64,16 @@ export function MetricBarChart({
           tick={{ fontSize: 11, fill: colors.text }}
         />
         <YAxis stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
-        <Tooltip formatter={MS_TOOLTIP} contentStyle={colors.tooltip} labelStyle={colors.tooltipLabel} />
+        <Tooltip
+          cursor={false}
+          formatter={MS_TOOLTIP}
+          contentStyle={colors.tooltip}
+          labelStyle={colors.tooltipLabel}
+          itemStyle={colors.tooltipItem}
+        />
         <Legend />
-        <Bar dataKey="p50" name="p50" fill="#3d7dc8" />
-        <Bar dataKey="p99" name="p99" fill="#c25b4e" />
+        <Bar dataKey="p50" name="p50" fill="#3d7dc8" activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }} />
+        <Bar dataKey="p99" name="p99" fill="#c25b4e" activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }} />
       </BarChart>
     </ResponsiveContainer>
   )
@@ -104,8 +114,8 @@ export function Histogram({
         <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
         <XAxis dataKey="range" stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} />
         <YAxis stroke={colors.axis} tick={{ fontSize: 11, fill: colors.text }} allowDecimals={false} />
-        <Tooltip contentStyle={colors.tooltip} labelStyle={colors.tooltipLabel} />
-        <Bar dataKey="count" name="requests" fill="#5a8a5c" />
+        <Tooltip cursor={false} contentStyle={colors.tooltip} labelStyle={colors.tooltipLabel} itemStyle={colors.tooltipItem} />
+        <Bar dataKey="count" name="requests" fill="#5a8a5c" activeBar={{ stroke: colors.activeBar, strokeWidth: 2 }} />
       </BarChart>
     </ResponsiveContainer>
   )
