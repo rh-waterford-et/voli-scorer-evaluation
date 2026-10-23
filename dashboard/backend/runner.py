@@ -294,7 +294,17 @@ class RunManager:
 
     def create(self, name: Optional[str], params) -> ManagedRun:
         run_id, attempts = self.plan(params)
-        label = (name or "").strip() or ", ".join(params.profile_names)[:80]
+        profiles = params.profile_names
+        label = (name or "").strip()
+        if not label:
+            # Standard default names: a single-profile run is named after its
+            # profile; a multi-profile run gets "<first> + N more" (the suite
+            # chip in History marks it as compound, so the name stays
+            # specific enough to tell suite runs apart).
+            if len(profiles) > 1:
+                label = f"{profiles[0]} + {len(profiles) - 1} more"
+            else:
+                label = profiles[0] if profiles else "run"
         meta = self.store.create(run_id, label, params.model_dump())
         profiles_dir = self.store.run_dir(run_id) / "profiles"
         profiles_dir.mkdir(parents=True, exist_ok=True)

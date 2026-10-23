@@ -236,8 +236,18 @@ table.data tr.expand-row td {
 
 td.expander {
   cursor: pointer;
-  color: var(--muted);
-  width: 28px;
+  color: var(--accent);
+  width: 36px;
+  font-size: 20px;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+td.expander:hover {
+  color: var(--accent-strong);
 }
 
 td.best {
@@ -589,4 +599,22 @@ button.link {
   border-color: var(--accent-strong);
   color: var(--accent-contrast);
   text-decoration: none;
+}
+
+/* -- suite expansion in history ------------------------------------------------- */
+
+.suite-children {
+  margin: 4px 0 4px 26px;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
+
+.suite-child {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 2px 0;
+  font-weight: 400;
+  color: var(--text);
+  margin: 0;
 }

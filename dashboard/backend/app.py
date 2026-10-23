@@ -255,6 +255,7 @@ def list_runs(include_reports: bool = True):
             "status": meta.get("status"),
             "source": "dashboard",
             "model": (meta.get("params") or {}).get("model"),
+            "requested_profiles": (meta.get("params") or {}).get("profiles") or [],
         }
         summary = store.ensure_summary(meta)
         if summary:

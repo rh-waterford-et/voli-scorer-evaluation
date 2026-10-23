@@ -16,6 +16,7 @@ interface Props<T> {
   initialSortKey?: string
   initialDesc?: boolean
   expand?: (row: T) => React.ReactNode
+  expandable?: (row: T) => boolean
   emptyText?: string
 }
 
@@ -26,6 +27,7 @@ export default function SortTable<T>({
   initialSortKey,
   initialDesc = false,
   expand,
+  expandable,
   emptyText = 'No rows.',
 }: Props<T>) {
   const [sortKey, setSortKey] = useState<string>(initialSortKey ?? '')
@@ -75,7 +77,7 @@ export default function SortTable<T>({
       <table className="data">
         <thead>
           <tr>
-            {expand && <th style={{ width: 28 }} />}
+            {expand && <th style={{ width: 36 }} />}
             {columns.map((column) => (
               <th
                 key={column.key}
@@ -94,11 +96,16 @@ export default function SortTable<T>({
           {sorted.map((row) => {
             const key = rowKey(row)
             const isOpen = expanded.has(key)
+            const canExpand = !expandable || expandable(row)
             return (
               <React.Fragment key={key}>
                 <tr className={isOpen ? 'expanded' : ''}>
                   {expand && (
-                    <td className="expander" onClick={() => toggleExpand(key)}>
+                    <td
+                      className="expander"
+                      onClick={() => canExpand && toggleExpand(key)}
+                      style={{ cursor: canExpand ? 'pointer' : 'default', color: canExpand ? undefined : 'transparent' }}
+                    >
                       {isOpen ? '▾' : '▸'}
                     </td>
                   )}

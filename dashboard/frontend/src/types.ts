@@ -161,6 +161,7 @@ export interface RunMeta {
   summary?: RunSummary
   model?: string | null
   endpoint?: string | null
+  requested_profiles?: string[]
 }
 
 export interface RunDetail extends RunMeta {

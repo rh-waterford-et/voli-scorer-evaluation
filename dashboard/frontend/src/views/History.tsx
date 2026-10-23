@@ -2,14 +2,107 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import SortTable, { type Column } from '../components/SortTable'
 import { api } from '../api'
-import type { RunMeta } from '../types'
-import { fmtInt, fmtWhen, isActive, statusClass } from '../format'
+import type { RunDetail, RunMeta } from '../types'
+import { fmtInt, fmtWhen, isActive, loadLabel, statusClass } from '../format'
+
+// Selection items are `${runId}@${profile}`: comparison works at the level of
+// one scheduling profile within one run. Standalone runs contribute their
+// single profile directly; suite runs expand so individual profiles can be
+// selected.
+const itemKey = (runId: string, profile: string) => `${runId}@${profile}`
+
+function profilesOf(row: RunMeta): string[] {
+  if (row.requested_profiles?.length) return row.requested_profiles
+  return row.summary?.profiles ?? []
+}
+
+function isSuite(row: RunMeta): boolean {
+  return profilesOf(row).length > 1
+}
+
+interface ChildProfile {
+  name: string
+  scorer: string | null
+  loads: string[]
+  valid: number
+  failed: number
+}
+
+function childrenFromDetail(detail: RunDetail): ChildProfile[] {
+  const order: string[] = []
+  const byName = new Map<string, ChildProfile>()
+  for (const run of detail.results?.runs ?? []) {
+    let child = byName.get(run.profile)
+    if (!child) {
+      child = { name: run.profile, scorer: run.scorer, loads: [], valid: 0, failed: 0 }
+      byName.set(run.profile, child)
+      order.push(run.profile)
+    }
+    child.loads.push(loadLabel(run))
+    child.valid += run.valid_responses
+    child.failed += run.failed_responses
+  }
+  return order.map((name) => byName.get(name)!)
+}
+
+function SuiteChildren({
+  row,
+  detail,
+  loading,
+  error,
+  ensure,
+  selected,
+  toggleItem,
+}: {
+  row: RunMeta
+  detail: RunDetail | null
+  loading: boolean
+  error: string | null
+  ensure: (id: string) => void
+  selected: Set<string>
+  toggleItem: (runId: string, profile: string) => void
+}) {
+  useEffect(() => {
+    ensure(row.id)
+  }, [row.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (error) return <div className="error-text">{error}</div>
+  if (!detail) return <div className="muted">{loading ? 'Loading profiles…' : ' '}</div>
+  const children = childrenFromDetail(detail)
+  if (!children.length) return <div className="muted">No profile results stored yet.</div>
+  return (
+    <div className="suite-children">
+      {children.map((child) => {
+        const key = itemKey(row.id, child.name)
+        return (
+          <label key={child.name} className="suite-child">
+            <input
+              type="checkbox"
+              checked={selected.has(key)}
+              onChange={() => toggleItem(row.id, child.name)}
+            />
+            <span className="mono">{child.name}</span>
+            <span className="muted profile-scorers">{child.scorer ?? ''}</span>
+            <span className="muted">loads {child.loads.join(', ')}</span>
+            <span className="muted">
+              valid {fmtInt(child.valid)} / failed {fmtInt(child.failed)}
+            </span>
+          </label>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function History() {
   const navigate = useNavigate()
   const [items, setItems] = useState<RunMeta[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  const [suiteDetails, setSuiteDetails] = useState<Record<string, RunDetail>>({})
+  const [suiteLoading, setSuiteLoading] = useState<Set<string>>(new Set())
+  const [suiteErrors, setSuiteErrors] = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
     try {
@@ -31,27 +124,61 @@ export default function History() {
     return () => clearInterval(timer)
   }, [anyActive, load])
 
-  const toggle = (id: string) => {
+  const ensureDetail = useCallback(
+    (id: string) => {
+      if (suiteDetails[id] || suiteLoading.has(id) || suiteErrors[id]) return
+      setSuiteLoading((previous) => new Set(previous).add(id))
+      api
+        .run(id)
+        .then((detail) => setSuiteDetails((previous) => ({ ...previous, [id]: detail })))
+        .catch((cause) => setSuiteErrors((previous) => ({ ...previous, [id]: String(cause) })))
+        .finally(() =>
+          setSuiteLoading((previous) => {
+            const next = new Set(previous)
+            next.delete(id)
+            return next
+          }),
+        )
+    },
+    [suiteDetails, suiteLoading, suiteErrors],
+  )
+
+  const toggleItem = (runId: string, profile: string) => {
     setSelected((previous) => {
       const next = new Set(previous)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      const key = itemKey(runId, profile)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
+  const toggleRun = (row: RunMeta) => {
+    const keys = profilesOf(row).map((profile) => itemKey(row.id, profile))
+    if (!keys.length) return
+    setSelected((previous) => {
+      const next = new Set(previous)
+      const allSelected = keys.every((key) => next.has(key))
+      for (const key of keys) {
+        if (allSelected) next.delete(key)
+        else next.add(key)
+      }
+      return next
+    })
+  }
+
+  const selectedRunIds = () =>
+    Array.from(new Set(Array.from(selected).map((key) => key.split('@')[0])))
+
   const remove = async (id: string) => {
-    const isReport = id.startsWith('report:')
-    const message = isReport
-      ? `Delete the repository report reports/${id.slice('report:'.length)}.json?\n\n` +
-        'This removes the committed file from the working tree. Commit the deletion to make it permanent; until then it is recoverable with git.'
-      : `Delete run ${id} and its stored results?`
-    if (!window.confirm(message)) return
+    if (!window.confirm(`Delete run ${id} and its stored results?`)) return
     try {
       await api.remove(id)
       setSelected((previous) => {
         const next = new Set(previous)
-        next.delete(id)
+        for (const key of Array.from(next)) {
+          if (key.split('@')[0] === id) next.delete(key)
+        }
         return next
       })
       load()
@@ -61,38 +188,58 @@ export default function History() {
   }
 
   const removeSelected = async () => {
-    const ids = Array.from(selected)
-    if (!ids.length) return
-    const reports = ids.filter((id) => id.startsWith('report:')).length
-    const runs = ids.length - reports
-    const parts = [
-      runs ? `${runs} dashboard run${runs > 1 ? 's' : ''} (with stored results)` : '',
-      reports
-        ? `${reports} repository report${reports > 1 ? 's' : ''} (file removed from the working tree — commit to make permanent)`
-        : '',
-    ].filter(Boolean)
-    if (!window.confirm(`Delete ${parts.join(' and ')}?`)) return
-    const results = await Promise.allSettled(ids.map((id) => api.remove(id)))
+    const runIds = selectedRunIds()
+    if (!runIds.length) return
+    if (
+      !window.confirm(
+        `Delete ${runIds.length} run${runIds.length > 1 ? 's' : ''} and their stored results?` +
+          '\n\nWhole runs are deleted, including profiles you did not select.',
+      )
+    ) {
+      return
+    }
+    const results = await Promise.allSettled(runIds.map((id) => api.remove(id)))
     const failures = results
-      .map((result, index) => (result.status === 'rejected' ? `${ids[index]}: ${result.reason}` : null))
+      .map((result, index) =>
+        result.status === 'rejected' ? `${runIds[index]}: ${result.reason}` : null,
+      )
       .filter((value): value is string => value != null)
     if (failures.length) setError(failures.join('\n'))
     setSelected(new Set())
     load()
   }
 
+  const compareSelected = () => {
+    const itemsParam = Array.from(selected).map(encodeURIComponent).join(',')
+    navigate(`/compare?items=${itemsParam}`)
+  }
+
   const columns: Column<RunMeta>[] = [
     {
       key: 'select',
       label: '',
-      render: (row) => (
-        <input
-          type="checkbox"
-          checked={selected.has(row.id)}
-          onChange={() => toggle(row.id)}
-          onClick={(event) => event.stopPropagation()}
-        />
-      ),
+      render: (row) => {
+        const keys = profilesOf(row).map((profile) => itemKey(row.id, profile))
+        const selectedCount = keys.filter((key) => selected.has(key)).length
+        const all = keys.length > 0 && selectedCount === keys.length
+        const some = selectedCount > 0 && !all
+        return (
+          <input
+            type="checkbox"
+            checked={all}
+            ref={(element) => {
+              if (element) element.indeterminate = some
+            }}
+            onChange={() => toggleRun(row)}
+            onClick={(event) => event.stopPropagation()}
+            title={
+              keys.length > 1
+                ? `Select all ${keys.length} profiles in this suite run`
+                : 'Select this profile for comparison'
+            }
+          />
+        )
+      },
     },
     {
       key: 'created',
@@ -107,7 +254,7 @@ export default function History() {
       label: 'Name',
       sort: (row) => row.name ?? '',
       render: (row) => {
-        const profileCount = row.summary?.profiles.length ?? 0
+        const profileCount = profilesOf(row).length
         return (
           <Link to={`/runs/${encodeURIComponent(row.id)}`}>
             {row.name || row.id}
@@ -116,7 +263,7 @@ export default function History() {
                 {' '}
                 <span
                   className="chip"
-                  title={`Benchmarks ${profileCount} profiles — browse its results from the run view; not comparable in the Compare view`}
+                  title={`Benchmarks ${profileCount} profiles — expand to select individual profiles for comparison`}
                 >
                   suite
                 </span>
@@ -141,24 +288,24 @@ export default function History() {
     {
       key: 'profiles',
       label: 'Profiles',
-      title: 'Distinct EPP profiles exercised',
       align: 'right',
-      sort: (row) => row.summary?.profiles.length ?? 0,
-      render: (row) => fmtInt(row.summary?.profiles.length),
+      title: 'Distinct EPP profiles exercised',
+      sort: (row) => profilesOf(row).length,
+      render: (row) => fmtInt(profilesOf(row).length),
     },
     {
       key: 'requests',
       label: 'Requests',
-      title: 'Total requests across all profile runs',
       align: 'right',
+      title: 'Total requests across all profile runs',
       sort: (row) => row.summary?.requests ?? 0,
       render: (row) => fmtInt(row.summary?.requests),
     },
     {
       key: 'valid',
       label: 'Valid / Failed',
-      title: 'Valid responses vs failed requests',
       align: 'right',
+      title: 'Valid responses vs failed requests',
       sort: (row) => (row.summary?.valid ?? 0) - (row.summary?.failed ?? 0),
       render: (row) => (
         <span>
@@ -189,6 +336,8 @@ export default function History() {
     },
   ]
 
+  const suiteRowCount = selectedRunIds().length
+
   return (
     <div>
       <div className="page-head">
@@ -198,18 +347,22 @@ export default function History() {
           <button
             className="primary"
             disabled={selected.size < 2}
-            title={selected.size < 2 ? 'Select at least two runs' : 'Compare selected runs'}
-            onClick={() => navigate(`/compare?ids=${encodeURIComponent(Array.from(selected).join(','))}`)}
+            title={
+              selected.size < 2
+                ? 'Select at least two profiles (expand suite runs to pick individual profiles)'
+                : 'Compare the selected profiles'
+            }
+            onClick={compareSelected}
           >
             Compare selected ({selected.size})
           </button>
           <button
             className="danger"
             disabled={!selected.size}
-            title="Delete all selected entries. Dashboard runs remove their stored results; repository reports are removed from the working tree (commit to make permanent)."
+            title="Delete the whole runs touched by the current selection, including profiles you did not select."
             onClick={removeSelected}
           >
-            Delete selected ({selected.size})
+            Delete selected ({suiteRowCount} run{suiteRowCount === 1 ? '' : 's'})
           </button>
         </div>
       </div>
@@ -221,14 +374,26 @@ export default function History() {
           rowKey={(row) => row.id}
           initialSortKey="created"
           initialDesc
+          expandable={isSuite}
+          expand={(row) => (
+            <SuiteChildren
+              row={row}
+              detail={suiteDetails[row.id] ?? null}
+              loading={suiteLoading.has(row.id)}
+              error={suiteErrors[row.id] ?? null}
+              ensure={ensureDetail}
+              selected={selected}
+              toggleItem={toggleItem}
+            />
+          )}
           emptyText={items === null ? 'Loading…' : 'No runs yet. Start one from New Run.'}
         />
       </div>
       <p className="muted">
-        Runs marked <span className="chip">suite</span> benchmark multiple scheduling profiles
-        and cannot be compared in the Compare view — open the run to browse its per-profile
-        results. Compare works with runs that each benchmark a single profile (with one or more
-        scorers).
+        Selection is per scheduling profile: standalone runs select directly, and runs marked{' '}
+        <span className="chip">suite</span> expand to their individual profiles (each with one or
+        more scorers). Suite rows also have a select-all checkbox. Deleting always removes whole
+        runs.
       </p>
     </div>
   )

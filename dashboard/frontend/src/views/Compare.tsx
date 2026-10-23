@@ -19,6 +19,27 @@ import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
 
 type Stat = 'mean' | 'p50' | 'p99'
 
+interface SelectedItem {
+  runId: string
+  profile: string
+}
+
+// Items are `${runId}@${profile}` — the comparison unit is one scheduling
+// profile within one run, so profiles from suite runs and standalone runs
+// can be mixed freely.
+function parseItems(raw: string | null): SelectedItem[] {
+  return (raw ?? '')
+    .split(',')
+    .filter(Boolean)
+    .map((entry) => decodeURIComponent(entry))
+    .map((entry) => {
+      const separator = entry.indexOf('@')
+      if (separator < 0) return null
+      return { runId: entry.slice(0, separator), profile: entry.slice(separator + 1) }
+    })
+    .filter((item): item is SelectedItem => item != null && !!item.runId && !!item.profile)
+}
+
 function shortLabel(detail: RunDetail, index: number): string {
   const base = (detail.name || detail.id).replace(/\s+/g, ' ').slice(0, 18)
   return `${index + 1}: ${base}`
@@ -26,8 +47,10 @@ function shortLabel(detail: RunDetail, index: number): string {
 
 export default function Compare() {
   const [searchParams] = useSearchParams()
-  const ids = (searchParams.get('ids') ?? '').split(',').filter(Boolean)
-  const [details, setDetails] = useState<RunDetail[]>([])
+  const items = useMemo(() => parseItems(searchParams.get('items')), [searchParams])
+  const runIds = useMemo(() => Array.from(new Set(items.map((item) => item.runId))), [items])
+
+  const [runsById, setRunsById] = useState<Record<string, RunDetail>>({})
   const [error, setError] = useState<string | null>(null)
   const [metric, setMetric] = useState('e2e_ms')
   const [stat, setStat] = useState<Stat>('p50')
@@ -35,12 +58,25 @@ export default function Compare() {
   const [scorerCheck, setScorerCheck] = useState<ProfilesCheckResponse | null>(null)
 
   useEffect(() => {
-    if (!ids.length) return
-    Promise.all(ids.map((id) => api.run(id)))
-      .then((result) => setDetails(result.filter((d) => d.results?.runs?.length)))
+    if (!runIds.length) return
+    setRunsById({})
+    Promise.all(runIds.map((id) => api.run(id)))
+      .then((results) => {
+        const map: Record<string, RunDetail> = {}
+        for (const detail of results) map[detail.id] = detail
+        setRunsById(map)
+        setError(null)
+      })
       .catch((cause) => setError(String(cause)))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams])
+  }, [runIds])
+
+  const details = useMemo(
+    () =>
+      runIds
+        .map((id) => runsById[id])
+        .filter((detail): detail is RunDetail => detail != null && !!detail.results?.runs?.length),
+    [runIds, runsById],
+  )
 
   // Scorer operability for the compared profiles (first run's endpoint; a
   // real endpoint mismatch is flagged separately by the confounder check).
@@ -62,7 +98,17 @@ export default function Compare() {
       .catch(() => setScorerCheck(null))
   }, [details])
 
-  const allRuns = useMemo(() => details.flatMap((detail) => detail.results?.runs ?? []), [details])
+  const isItemSelected = (runId: string, profile: string) =>
+    items.some((item) => item.runId === runId && item.profile === profile)
+
+  const selectedRunsOf = (detail: RunDetail): ScriptRun[] =>
+    (detail.results?.runs ?? []).filter((run) => isItemSelected(detail.id, run.profile))
+
+  const allRuns = useMemo(
+    () => details.flatMap((detail) => selectedRunsOf(detail)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [details, items],
+  )
   const metricKeys = useMemo(
     () => METRIC_ORDER.filter((key) => allRuns.some((run) => (run.metrics?.[key]?.n ?? 0) > 0)),
     [allRuns],
@@ -85,16 +131,16 @@ export default function Compare() {
   }, [metricKeys, loads])
 
   const findRun = (detail: RunDetail, profile: string): ScriptRun | undefined =>
-    detail.results?.runs.find((run) => run.profile === profile && loadLabel(run) === load)
+    selectedRunsOf(detail).find((run) => run.profile === profile && loadLabel(run) === load)
 
   const cellValue = (detail: RunDetail, profile: string): number | null => {
     const run = findRun(detail, profile)
     return run ? run.metrics?.[metric]?.[stat] ?? null : null
   }
 
-  // Confounders that can dominate latency differences between runs. Repository
-  // reports carry no params, so their prompt/session settings count as unknown
-  // and only confirmed differences (two or more distinct known values) warn.
+  // Confounders that can dominate latency differences between runs. Runs
+  // without stored settings count as unknown and only confirmed differences
+  // (two or more distinct known values) warn.
   const promptOf = (detail: RunDetail): string | null => {
     if (!detail.params) return null
     const text = (detail.params.prompts_text ?? '').trim()
@@ -136,13 +182,11 @@ export default function Compare() {
   // get an interpretation note.
   const caveatedProfiles = new Map<string, ProfileCheck>()
   if (scorerCheck) {
-    for (const detail of details) {
-      for (const run of detail.results?.runs ?? []) {
-        const check = scorerCheck.profiles[run.profile]
-        if (!check || check.severity === 'ok') continue
-        if (check.severity === 'bad') inoperableProfiles.add(run.profile)
-        else caveatedProfiles.set(run.profile, check)
-      }
+    for (const run of allRuns) {
+      const check = scorerCheck.profiles[run.profile]
+      if (!check || check.severity === 'ok') continue
+      if (check.severity === 'bad') inoperableProfiles.add(run.profile)
+      else caveatedProfiles.set(run.profile, check)
     }
   }
   if (inoperableProfiles.size) {
@@ -151,6 +195,16 @@ export default function Compare() {
   const operabilityBlocked = inoperableProfiles.size > 0
   const settingsMismatched = mismatched.length > (operabilityBlocked ? 1 : 0)
   const comparable = mismatched.length === 0
+
+  // Profiles selected from suite runs: measured alongside other profiles, so
+  // sequential-execution effects (warm caches, varying load) may apply.
+  const suiteRunLabels = details
+    .map((detail, index) => ({ detail, index }))
+    .filter(
+      ({ detail }) =>
+        new Set((detail.results?.runs ?? []).map((run) => run.profile)).size > 1,
+    )
+    .map(({ detail, index }) => shortLabel(detail, index))
 
   // Latency-like metrics: lower is better. Winner highlighting is suppressed
   // while the runs differ in a confounder (prompt, session, model, ...).
@@ -191,12 +245,13 @@ export default function Compare() {
     color: ['#3d7dc8', '#c25b4e', '#5a8a5c', '#8a6bb5', '#b58a3d'][index % 5],
   }))
 
-  if (!ids.length) {
+  if (!items.length) {
     return (
       <div>
         <h1>Compare runs</h1>
         <div className="panel muted">
-          Select runs in the History view, then click "Compare selected".
+          Select profiles in the History view (expand suite runs to pick individual profiles),
+          then click "Compare selected".
         </div>
       </div>
     )
@@ -216,42 +271,6 @@ export default function Compare() {
       <div>
         <h1>Compare runs</h1>
         <div className="panel muted">Loading…</div>
-      </div>
-    )
-  }
-
-  // The comparison view is for runs that each benchmark a single scheduling
-  // profile (at one or more loads). Suite runs are a different measurement
-  // context (profiles execute sequentially and influence each other's pod
-  // and cache state), so they are blocked here, not silently dropped.
-  const multiProfileRuns = details
-    .map((detail) => ({
-      detail,
-      profileCount: new Set((detail.results?.runs ?? []).map((run) => run.profile)).size,
-    }))
-    .filter((entry) => entry.profileCount > 1)
-  if (multiProfileRuns.length) {
-    return (
-      <div>
-        <div className="page-head">
-          <h1>Compare runs</h1>
-        </div>
-        <div className="warn-text panel">
-          <strong>These runs cannot be compared here.</strong> The comparison view compares
-          runs that each benchmark a single scheduling profile; the following selections
-          contain multiple profiles:
-          <ul style={{ margin: '6px 0', paddingLeft: 20 }}>
-            {multiProfileRuns.map((entry) => (
-              <li key={entry.detail.id}>
-                <span className="mono">{entry.detail.name || entry.detail.id}</span> —{' '}
-                {entry.profileCount} profiles
-              </li>
-            ))}
-          </ul>
-          Deselect them and compare single-profile runs (single scorer or combined scorers
-          both work), or open a suite run from the History view to browse its per-profile
-          results.
-        </div>
       </div>
     )
   }
@@ -323,11 +342,20 @@ export default function Compare() {
         </div>
       )}
 
+      {suiteRunLabels.length > 0 && (
+        <div className="panel warn-text">
+          <strong>Measured within suite runs:</strong> {suiteRunLabels.join(', ')} benchmark
+          multiple profiles sequentially, so these values may carry execution-order effects
+          (warm caches, varying cluster load). They remain comparable — just treat small
+          differences with care, and prefer repeated runs when a verdict matters.
+        </div>
+      )}
+
       <div className="panel">
         <div className="actions">
           <label>
             Metric
-            <HelpHint text="Which latency metric to compare across the selected runs." />
+            <HelpHint text="Which latency metric to compare across the selected profiles." />
             <select value={metric} onChange={(e) => setMetric(e.target.value)}>
               {metricKeys.map((key) => (
                 <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>
@@ -408,7 +436,7 @@ export default function Compare() {
               Winner highlighting is disabled because the runs differ in {mismatched.join(', ')}.
             </>
           )}{' '}
-          Missing cells mean the run has no matching profile/load combination.
+          Empty cells are not part of the selection or have no data at the chosen load.
         </p>
       </div>
 

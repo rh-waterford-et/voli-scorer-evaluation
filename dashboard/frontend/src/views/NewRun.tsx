@@ -277,7 +277,7 @@ export default function NewRun() {
           <div>
             <label>
               Run name (optional)
-              <HelpHint text="A label for this run in History. If left empty, the selected profile names are used." />
+              <HelpHint text="A label for this run in History. If left empty: a single selected profile names the run after itself, and multiple selected profiles produce a standard name like 'queueProfile + 2 more'." />
             </label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}
               placeholder="e.g. tts load combos repeat 1" />
