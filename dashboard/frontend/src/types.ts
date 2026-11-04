@@ -65,6 +65,7 @@ export interface RequestResult {
   upstream?: string | null
   http_status?: number | null
   e2e_ms?: number | null
+  embedding_dimensions?: number | null
   ttft_ms?: number | null
   ttfo_ms?: number | null
   ttfa_ms?: number | null

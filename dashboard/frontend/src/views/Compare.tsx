@@ -86,7 +86,9 @@ export default function Compare() {
     const first = details[0]
     const endpoint =
       first.params?.endpoint ??
-      (first.results?.endpoint?.includes('/v1/audio/speech')
+      (first.results?.endpoint?.includes('/v1/embeddings')
+        ? '/v1/embeddings'
+        : first.results?.endpoint?.includes('/v1/audio/speech')
         ? '/v1/audio/speech'
         : '/v1/chat/completions')
     api
@@ -155,7 +157,8 @@ export default function Compare() {
   const sessionOf = (detail: RunDetail): number | null =>
     detail.params ? detail.params.session_length ?? 0 : null
   const modalitiesOf = (detail: RunDetail): string =>
-    (detail.results?.modalities ?? []).join(',') || detail.params?.modalities || '—'
+    (detail.results?.modalities ?? []).join(',') ||
+    (detail.params?.endpoint === '/v1/embeddings' ? 'embedding' : detail.params?.modalities) || '—'
 
   const models = Array.from(new Set(details.map((d) => d.results?.model ?? d.params?.model ?? '—')))
   const endpoints = Array.from(

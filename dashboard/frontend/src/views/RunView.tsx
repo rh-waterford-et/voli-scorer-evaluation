@@ -127,8 +127,6 @@ function RequestsTable({ run }: { run: ScriptRun }) {
         ),
     },
     { key: 'pod', label: 'Pod', title: 'Backend pod that served the request, resolved from Gateway logs or a response header', sort: (r) => r.pod ?? '', render: (r) => <span className="mono">{shortPod(r.pod)}</span> },
-    { key: 'ttfa', label: 'TTFA ms', title: 'Time to first audio event, ms — client-observed', align: 'right', sort: (r) => r.ttfa_ms ?? null, render: (r) => fmtMs(r.ttfa_ms) },
-    { key: 'ttft', label: 'TTFT ms', title: 'Time to first text/reasoning event, ms — client-observed', align: 'right', sort: (r) => r.ttft_ms ?? null, render: (r) => fmtMs(r.ttft_ms) },
     { key: 'e2e', label: 'E2E ms', title: 'End-to-end request duration, ms', align: 'right', sort: (r) => r.e2e_ms ?? null, render: (r) => fmtMs(r.e2e_ms) },
     {
       key: 'epp',
@@ -136,6 +134,15 @@ function RequestsTable({ run }: { run: ScriptRun }) {
       render: (r) => (r.epp_scores ? <span className="chip">{r.epp_scores.status}</span> : '—'),
     },
   ]
+  if (requests.some((r) => r.ttfa_ms != null)) {
+    columns.splice(3, 0, { key: 'ttfa', label: 'TTFA ms', title: 'Time to first audio event, ms — client-observed', align: 'right', sort: (r) => r.ttfa_ms ?? null, render: (r) => fmtMs(r.ttfa_ms) })
+  }
+  if (requests.some((r) => r.ttft_ms != null)) {
+    columns.splice(3, 0, { key: 'ttft', label: 'TTFT ms', title: 'Time to first text/reasoning event, ms — client-observed', align: 'right', sort: (r) => r.ttft_ms ?? null, render: (r) => fmtMs(r.ttft_ms) })
+  }
+  if (requests.some((r) => r.embedding_dimensions != null)) {
+    columns.splice(3, 0, { key: 'dimensions', label: 'Dimensions', align: 'right', sort: (r) => r.embedding_dimensions ?? null, render: (r) => fmtInt(r.embedding_dimensions) })
+  }
   return (
     <SortTable
       columns={columns}
@@ -219,7 +226,9 @@ export default function RunView() {
     const params = detail.params
     const endpoint =
       params?.endpoint ??
-      (detail.results.endpoint?.includes('/v1/audio/speech')
+      (detail.results.endpoint?.includes('/v1/embeddings')
+        ? '/v1/embeddings'
+        : detail.results.endpoint?.includes('/v1/audio/speech')
         ? '/v1/audio/speech'
         : '/v1/chat/completions')
     let cancelled = false

@@ -10,7 +10,7 @@ when reporting issues, include it.
 
 ## Unreleased
 
-- (nothing yet)
+- Support text embeddings with non-streaming response validation and end-to-end latency.
 
 ## 0.1.13 — 2026-10-23
 

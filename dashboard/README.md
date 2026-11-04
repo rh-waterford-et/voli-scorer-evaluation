@@ -6,9 +6,8 @@ compare profiles by latency metrics, and inspect per-request EPP scoring
 decisions. Includes a profile builder for composing, editing, and deleting
 EPP scheduling profiles on the cluster.
 
-It is a thin layer over the existing scripts — `stream_metrics.py` and
-`epp_scores.py` are **not modified**. The backend imports/reuses them and runs
-the benchmark as a subprocess.
+It is a thin layer over the existing scripts. The backend imports/reuses them
+and runs the benchmark as a subprocess.
 
 ## What it does
 
@@ -46,9 +45,6 @@ read, requirements report **unknown**, never *missing*. Severities:
 Only *bad* severity suppresses Compare winner highlighting; *warn*/*unknown*
 show an informational interpretation note there instead. Re-verify the
 file after router upgrades and update `verified_as_of`; the UI displays it.
-
-The profile builder (compose scorers/weights, apply to the cluster) is planned
-as a second stage and not included yet.
 
 ## Safety / access model
 
@@ -103,7 +99,7 @@ npm run build
 ```
 
 For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
-`transformers` into the same venv (TTS runs need nothing extra):
+`transformers` into the same venv (TTS and embeddings runs need nothing extra):
 
 ```bash
 dashboard/.venv/bin/pip install transformers
@@ -119,6 +115,10 @@ dashboard/.venv/bin/uvicorn app:app --app-dir dashboard/backend --port 8765
 ```
 
 Then open <http://localhost:8765>.
+
+For `/v1/embeddings`, each request sends one text input and validates a
+nonempty numeric vector. Results record its dimension and client-observed
+end-to-end latency; streaming metrics such as TTFT and TTFA do not apply.
 
 ### Frontend dev mode
 

@@ -196,7 +196,9 @@ class RunStore:
         if endpoint is None:
             endpoint = params.get("endpoint")
         if not modalities:
-            modalities = ["audio"] if params.get("endpoint") == "/v1/audio/speech" else []
+            modalities = {"/v1/audio/speech": ["audio"], "/v1/embeddings": ["embedding"]}.get(
+                params.get("endpoint"), []
+            )
         return {"model": model, "endpoint": endpoint, "modalities": modalities, "runs": runs}
 
     def ensure_summary(self, meta: dict) -> Optional[dict]:

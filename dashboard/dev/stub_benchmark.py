@@ -83,6 +83,7 @@ for iterations, concurrency in settings:
             routing[pod] = routing.get(pod, 0) + 1
         else:
             failures += 1
+        embedding = args.endpoint == "/v1/embeddings"
         results.append(
             {
                 "iteration": index,
@@ -90,8 +91,9 @@ for iterations, concurrency in settings:
                 "error": None if ok else "stub simulated failure",
                 "pod": pod if ok else None,
                 "e2e_ms": e2e_values[index - 1],
-                "ttfa_ms": ttfa_values[index - 1],
+                "ttfa_ms": None if embedding else ttfa_values[index - 1],
                 "ttft_ms": None,
+                **({"embedding_dimensions": 1024} if embedding and ok else {}),
                 "profile": args.profile,
                 "scorer": scorer,
             }
@@ -110,12 +112,12 @@ for iterations, concurrency in settings:
             "routing": routing,
             "metrics": {
                 "e2e_ms": summary(e2e_values),
-                "ttfa_ms": summary(ttfa_values),
+                "ttfa_ms": summary([] if args.endpoint == "/v1/embeddings" else ttfa_values),
                 "ttft_ms": summary([]),
                 "ttfo_ms": summary([]),
                 "tpot_estimate_ms": summary([]),
                 "text_gap_ms": summary([]),
-                "audio_gap_ms": summary([v / 8 for v in ttfa_values]),
+                "audio_gap_ms": summary([] if args.endpoint == "/v1/embeddings" else [v / 8 for v in ttfa_values]),
             },
             "results": results,
         }
@@ -131,8 +133,8 @@ payload = (
     if len(runs_out) == 1
     else {
         "model": "stub-model",
-        "endpoint": "stub-endpoint",
-        "modalities": ["audio"],
+        "endpoint": args.endpoint,
+        "modalities": ["embedding"] if args.endpoint == "/v1/embeddings" else ["audio"],
         "runs": runs_out,
     }
 )

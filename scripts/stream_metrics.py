@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure client-observed Qwen3-Omni streaming latency through an llm-d Gateway.
+"""Measure client-observed inference latency through a gateway or local server.
 
 SSE messages may contain several tokens, so text and audio chunk gaps are
 proxies, not token-level ITL. Text TPOT is an estimate from the first and last
@@ -54,7 +54,7 @@ def load_profile_scorers():
 PROFILE_SCORERS = load_profile_scorers()
 
 
-ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech")
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings")
 
 
 def endpoint_url(url, endpoint="/v1/chat/completions"):
@@ -127,6 +127,8 @@ def print_latency_table(rows):
 
 
 def payload_for(args, prompt, modalities):
+    if args.endpoint == "/v1/embeddings":
+        return {"model": args.model, "input": prompt, "encoding_format": "float"}
     if args.endpoint == "/v1/audio/speech":
         return {
             "model": args.model,
@@ -178,9 +180,11 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
         "e2e_ms": None,
         "response_pod_header": None,
     }
+    if args.endpoint == "/v1/embeddings":
+        result["embedding_dimensions"] = None
     headers = {
         "Content-Type": "application/json",
-        "Accept": "text/event-stream",
+        "Accept": "application/json" if args.endpoint == "/v1/embeddings" else "text/event-stream",
         "User-Agent": marker,
         "X-Request-Id": sent_id,
     }
@@ -213,6 +217,31 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
             if args.session_length:
                 result["session_token_received"] = response.headers.get(args.session_header)
             content_type = response.headers.get("Content-Type", "")
+            if args.endpoint == "/v1/embeddings":
+                if "application/json" not in content_type.lower():
+                    snippet = response.read(1000).decode("utf-8", errors="replace")
+                    raise RuntimeError(f"expected JSON, got {content_type!r}: {snippet}")
+                try:
+                    document = json.loads(response.read())
+                except (ValueError, UnicodeDecodeError) as error:
+                    raise RuntimeError("invalid embeddings JSON") from error
+                if not isinstance(document, dict):
+                    raise RuntimeError("invalid embeddings response: expected an object")
+                if document.get("error"):
+                    raise RuntimeError(f"server error: {str(document['error'])[:500]}")
+                data = document.get("data")
+                if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+                    raise RuntimeError("invalid embeddings response: expected one embedding")
+                vector = data[0].get("embedding")
+                if not isinstance(vector, list) or not vector or any(
+                    type(value) not in (int, float) or not math.isfinite(value) for value in vector
+                ):
+                    raise RuntimeError("invalid embeddings response: expected a nonempty finite numeric vector")
+                result["embedding_dimensions"] = len(vector)
+                if isinstance(document.get("usage"), dict):
+                    result["usage"] = document["usage"]
+                result["status"] = "ok"
+                return result
             if "text/event-stream" not in content_type.lower():
                 snippet = response.read(1000).decode("utf-8", errors="replace")
                 raise RuntimeError(f"expected SSE, got {content_type!r}: {snippet}")
@@ -465,18 +494,22 @@ def print_debug_results(results, total):
         if result["missing_modalities"]:
             state = "missing " + ",".join(result["missing_modalities"])
         print(f"  Request {result['iteration']}/{total}  |  {state}  |  {pod}")
-        print(
-            f"    TTFT {format_ms(result['ttft_ms']):>8}   "
-            f"TTFO {format_ms(result['ttfo_ms']):>8}   "
-            f"TTFA {format_ms(result['ttfa_ms']):>8}   "
-            f"TPOT~ {format_ms(result['tpot_estimate_ms']):>8}   "
-            f"E2E {format_ms(result['e2e_ms']):>8}"
-        )
-        print(
-            f"    Chunks: text {result['text_chunks']}, audio {result['audio_chunks']}  |  "
-            f"Tokens: server {result['server_completion_tokens']}, "
-            f"client text {result['client_text_tokens']}"
-        )
+        if "embedding_dimensions" in result:
+            print(f"    Embedding dimensions: {result['embedding_dimensions']}")
+            print(f"    E2E {format_ms(result['e2e_ms'])} ms")
+        else:
+            print(
+                f"    TTFT {format_ms(result['ttft_ms']):>8}   "
+                f"TTFO {format_ms(result['ttfo_ms']):>8}   "
+                f"TTFA {format_ms(result['ttfa_ms']):>8}   "
+                f"TPOT~ {format_ms(result['tpot_estimate_ms']):>8}   "
+                f"E2E {format_ms(result['e2e_ms']):>8}"
+            )
+            print(
+                f"    Chunks: text {result['text_chunks']}, audio {result['audio_chunks']}  |  "
+                f"Tokens: server {result['server_completion_tokens']}, "
+                f"client text {result['client_text_tokens']}"
+            )
         if result["request_id_gateway"]:
             id_label, request_id = "Gateway ID", result["request_id_gateway"]
         elif result["request_id_response"]:
@@ -559,7 +592,7 @@ def suite_plan(args, parser):
             parser.error("--profiles contains duplicate names")
     else:
         profile = args.profile or "default"
-        scorer = "active-request-scorer" if profile == "default" else PROFILE_SCORERS.get(profile, "unknown")
+        scorer = "default (not verified)" if profile == "default" else PROFILE_SCORERS.get(profile, "unknown")
         return [(profile, scorer, runs)], len(runs) > 1
     return [(profile, PROFILE_SCORERS[profile], runs) for profile in selected], True
 
@@ -761,8 +794,9 @@ def print_run_report(run, args, modalities):
     counts = run["routing"]
     samples = run["_samples"]
     iterations = run["iterations"]
-    print("\nStreaming results")
-    print("=================")
+    title = "Embedding results" if args.endpoint == "/v1/embeddings" else "Streaming results"
+    print(f"\n{title}")
+    print("=" * len(title))
     print(f"  Model:        {args.model}")
     print(f"  Endpoint:     {endpoint_url(args.url, args.endpoint)}")
     print(f"  EPP profile:  {run['profile']}")
@@ -773,7 +807,9 @@ def print_run_report(run, args, modalities):
     print(f"  Duration:     {run['duration_seconds']:.2f} s  ({iterations / run['duration_seconds']:.2f} requests/s)")
 
     print_section("Latency (valid responses)")
-    if args.endpoint == "/v1/audio/speech":
+    if args.endpoint == "/v1/embeddings":
+        print_latency_table([("End-to-end", samples["e2e_ms"], "ms")])
+    elif args.endpoint == "/v1/audio/speech":
         print_latency_table([
             ("TTFA (first audio event)", samples["ttfa_ms"], "ms"),
             ("Audio chunk gap", samples["audio_gap_ms"], "ms"),
@@ -811,7 +847,9 @@ def print_run_report(run, args, modalities):
             if not pod_results:
                 continue
             print(f"  {pod}")
-            if args.endpoint == "/v1/audio/speech":
+            if args.endpoint == "/v1/embeddings":
+                print_latency_table([("End-to-end", [r["e2e_ms"] for r in pod_results], "ms")])
+            elif args.endpoint == "/v1/audio/speech":
                 print_latency_table([
                     ("TTFA", [r["ttfa_ms"] for r in pod_results if r["ttfa_ms"] is not None], "ms"),
                     ("End-to-end", [r["e2e_ms"] for r in pod_results], "ms"),
@@ -825,7 +863,9 @@ def print_run_report(run, args, modalities):
 
     print_issues(run)
     print_section("Notes")
-    if args.endpoint == "/v1/audio/speech":
+    if args.endpoint == "/v1/embeddings":
+        print("  Embeddings are non-streaming; latency covers the complete response.")
+    elif args.endpoint == "/v1/audio/speech":
         print("  TTFA and audio chunk gaps are client-observed from streamed SSE events.")
         print("  Audio chunk gaps are a streaming proxy, not token-level ITL.")
     else:
@@ -872,7 +912,9 @@ def print_suite_report(runs, args, modalities):
             f"valid {run['valid_responses']}/{run['iterations']}  |  "
             f"failed {run['failed_responses']}  |  {run['duration_seconds']:.1f} s"
         )
-        if args.endpoint == "/v1/audio/speech":
+        if args.endpoint == "/v1/embeddings":
+            print(f"     E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms")
+        elif args.endpoint == "/v1/audio/speech":
             print(
                 f"     TTFA p50/p99 {suite_value(run, 'ttfa_ms', 'p50')}/{suite_value(run, 'ttfa_ms', 'p99')} ms  |  "
                 f"audio gap p50/p99 {suite_value(run, 'audio_gap_ms', 'p50')}/{suite_value(run, 'audio_gap_ms', 'p99')} ms"
@@ -900,7 +942,9 @@ def print_suite_report(runs, args, modalities):
             print(f"     Issues: use --debug or --output-json for request details")
     print_section("Notes")
     print("  Profiles run sequentially; requests within each run use the stated concurrency.")
-    if args.endpoint == "/v1/audio/speech":
+    if args.endpoint == "/v1/embeddings":
+        print("  Embeddings are non-streaming; latency covers the complete response.")
+    elif args.endpoint == "/v1/audio/speech":
         print("  TTFA and audio chunk gaps are client-observed from streamed SSE events.")
         print("  Audio chunk gaps are a streaming proxy, not token-level ITL.")
     else:
@@ -982,7 +1026,9 @@ def main():
     if args.profile is not None and (not args.profile.strip() or "\r" in args.profile or "\n" in args.profile):
         parser.error("--profile must be a nonempty profile name without line breaks")
     plan, suite_mode = suite_plan(args, parser)
-    if args.endpoint == "/v1/audio/speech":
+    if args.endpoint == "/v1/embeddings":
+        modalities = ["embedding"]
+    elif args.endpoint == "/v1/audio/speech":
         modalities = ["audio"]
     else:
         modalities = [part.strip() for part in args.modalities.split(",")]

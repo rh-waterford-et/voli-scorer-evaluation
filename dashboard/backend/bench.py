@@ -13,7 +13,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech")
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings")
 
 
 class LoadSetting(BaseModel):
@@ -26,7 +26,7 @@ class LoadSetting(BaseModel):
 class RunParams(BaseModel):
     """Benchmark parameters; mirrors the stream_metrics.py flags we expose."""
 
-    endpoint: Literal["/v1/chat/completions", "/v1/audio/speech"] = "/v1/audio/speech"
+    endpoint: Literal["/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings"] = "/v1/audio/speech"
     model: str = Field(default="qwen3-tts", min_length=1)
     url: str = Field(default="http://10.6.62.51:31670", min_length=1)
     # Required: the caller picks profiles explicitly. "default" is a valid
@@ -113,9 +113,9 @@ class RunParams(BaseModel):
             argv += ["--modalities", self.modalities]
             if self.no_usage:
                 argv.append("--no-usage")
-        if self.voice:
+        if self.voice and self.endpoint != "/v1/embeddings":
             argv += ["--voice", self.voice]
-        if self.audio_format:
+        if self.audio_format and self.endpoint != "/v1/embeddings":
             argv += ["--audio-format", self.audio_format]
         if self.session_length >= 2:
             argv += ["--session-length", str(self.session_length)]

@@ -56,7 +56,7 @@ export default function NewRun() {
   const [searchParams] = useSearchParams()
 
   const [name, setName] = useState('')
-  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions'>('/v1/audio/speech')
+  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions' | '/v1/embeddings'>('/v1/audio/speech')
   const [model, setModel] = useState('qwen3-tts')
   const [url, setUrl] = useState(DEFAULTS.url)
   const [namespace, setNamespace] = useState(DEFAULTS.namespace)
@@ -203,8 +203,8 @@ export default function NewRun() {
       params.tokenizer = tokenizer
       params.modalities = modalities
     }
-    if (voice.trim()) params.voice = voice.trim()
-    if (audioFormat.trim()) params.audio_format = audioFormat.trim()
+    if (endpoint !== '/v1/embeddings' && voice.trim()) params.voice = voice.trim()
+    if (endpoint !== '/v1/embeddings' && audioFormat.trim()) params.audio_format = audioFormat.trim()
     if (sessionLength >= 2) {
       params.session_length = sessionLength
       params.session_header = sessionHeader
@@ -285,11 +285,12 @@ export default function NewRun() {
           <div>
             <label>
               Endpoint
-              <HelpHint text="Which API to test. /v1/audio/speech sends text-to-speech requests. /v1/chat/completions sends chat requests and needs a tokenizer for token counting." />
+              <HelpHint text="Choose TTS, chat, or text embeddings. Chat requires a tokenizer; embeddings use non-streaming JSON and report end-to-end latency." />
             </label>
             <select value={endpoint} onChange={(e) => setEndpoint(e.target.value as typeof endpoint)}>
               <option value="/v1/audio/speech">/v1/audio/speech (TTS)</option>
               <option value="/v1/chat/completions">/v1/chat/completions (chat)</option>
+              <option value="/v1/embeddings">/v1/embeddings (text embeddings)</option>
             </select>
           </div>
           <div>
@@ -483,6 +484,7 @@ export default function NewRun() {
               </div>
             </>
           )}
+          {endpoint !== '/v1/embeddings' && <>
           <div>
             <label>
               Voice (optional)
@@ -497,6 +499,7 @@ export default function NewRun() {
             </label>
             <input type="text" value={audioFormat} onChange={(e) => setAudioFormat(e.target.value)} placeholder="pcm" />
           </div>
+          </>}
         </div>
         {promptMode === 'single' ? (
           <div style={{ marginTop: 12 }}>
