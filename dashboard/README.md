@@ -85,32 +85,35 @@ file after router upgrades and update `verified_as_of`; the UI displays it.
 
 ## Setup
 
-Requirements: Python 3.11+ and Node 18+.
+Requirements: Python 3.12+, Node 18+, and [uv](https://docs.astral.sh/uv/).
+Run the following commands from the repository root.
+
+Install uv if needed:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 ```bash
 # backend venv (inside the repo)
-python3 -m venv dashboard/.venv
-dashboard/.venv/bin/pip install -r dashboard/backend/requirements.txt
+uv venv --python 3.12 dashboard/.venv
+uv pip install --python dashboard/.venv/bin/python -r dashboard/backend/requirements.txt
 
 # frontend
-cd dashboard/frontend
-npm install
-npm run build
+(cd dashboard/frontend && npm install && npm run build)
 ```
 
 For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
 `transformers` into the same venv (TTS and embeddings runs need nothing extra):
 
 ```bash
-dashboard/.venv/bin/pip install transformers
+uv pip install --python dashboard/.venv/bin/python transformers
 ```
 
 ## Run
 
 ```bash
-# cd back to the main folder
-cd ../../
-# launch the application
+# from the repository root
 dashboard/.venv/bin/uvicorn app:app --app-dir dashboard/backend --port 8765
 ```
 
@@ -220,3 +223,28 @@ VOLI_OC_CMD=dashboard/dev/fake_oc.py \
 The fake cluster state lives in `dashboard/data/fake-oc-state.json` (delete it
 to re-seed). `FAKE_OC_MODE=patch|restart|rollout` forces a failure at that
 step to exercise the failure and revert paths.
+
+## Local vLLM-Omni development setup
+
+For a local backend, this example uses an NVIDIA GPU on Linux x86_64 with a
+CUDA 13-compatible driver. See the [vLLM-Omni GPU installation guide](https://docs.vllm.ai/projects/vllm-omni/en/latest/getting_started/installation/gpu/)
+for hardware requirements and other platforms. Create a separate temporary
+environment so its dependencies do not affect the dashboard environment:
+
+```bash
+uv venv --python 3.12 --seed /tmp/voli-vllm-omni
+source /tmp/voli-vllm-omni/bin/activate
+
+uv pip install vllm==0.32.0 --torch-backend=cu130
+uv pip install vllm-omni==0.32.0
+
+# Serve a text-embedding model
+vllm serve Qwen/Qwen3-Embedding-0.6B --port 8091
+```
+
+This uses vLLM's regular embedding server; vLLM-Omni is not required for that
+specific model. In the dashboard, select `/v1/embeddings`, set the URL to
+`http://localhost:8091` and the model to the served model name, select the
+`default` profile, and enable **Skip pod/Gateway backend lookup**. Leave EPP
+score collection off. The dashboard's separate EPP caveat check may report
+cluster access as unavailable; it is not needed for this local request.
