@@ -495,7 +495,8 @@ def print_debug_results(results, total):
             state = "missing " + ",".join(result["missing_modalities"])
         print(f"  Request {result['iteration']}/{total}  |  {state}  |  {pod}")
         if "embedding_dimensions" in result:
-            print(f"    Embedding dimensions: {result['embedding_dimensions']}")
+            if result["embedding_dimensions"] is not None:
+                print(f"    Embedding dimensions: {result['embedding_dimensions']}")
             print(f"    E2E {format_ms(result['e2e_ms'])} ms")
         else:
             print(
