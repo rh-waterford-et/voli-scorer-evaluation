@@ -12,6 +12,7 @@ when reporting issues, include it.
 
 - Support text embeddings with non-streaming response validation and end-to-end latency.
 - Support image generation on `/v1/images/generations`: tiered content validation (PNG signature/header = verified; other formats and url-only = unverified, excluded from latency and rankings), optional requested size with Compare confounder checks, and qualified version-dependent scorer caveats for image workloads.
+- Support image editing on `/v1/images/edits`: multipart requests with an uploaded input image stored with the run (hash kept in params and results), input-image and size confounder checks in Compare, and qualified scorer caveats for edit workloads.
 
 ## 0.1.13 — 2026-10-23
 

@@ -11,6 +11,7 @@ import argparse
 import base64
 import binascii
 from collections import Counter
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import ipaddress
@@ -57,7 +58,14 @@ def load_profile_scorers():
 PROFILE_SCORERS = load_profile_scorers()
 
 
-ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations")
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits")
+
+# Image endpoints share the response shape (b64_json/url data) and the
+# tiered content-verification policy.
+IMAGE_ENDPOINTS = ("/v1/images/generations", "/v1/images/edits")
+
+# Content-Type for the file part of an image-edit multipart request.
+IMAGE_CONTENT_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 
 
 def endpoint_url(url, endpoint="/v1/chat/completions"):
@@ -130,6 +138,49 @@ def png_dimensions(data):
     return [width, height]
 
 
+def inspect_edit_image(data, name):
+    """Check and describe an edit image without decoding its contents.
+
+    The check is a format sniff plus, for PNG, the IHDR header parse — it does
+    not prove the image is complete or decodable. The returned dict carries
+    the raw bytes under "data" for request construction; serialization to
+    result files must drop that key (public_edit_image does).
+    """
+    image_format = sniff_image_format(data)
+    if image_format is None:
+        raise ValueError("image is not a recognized image (PNG, JPEG, WebP, GIF)")
+    dimensions = png_dimensions(data) if image_format == "png" else None
+    if image_format == "png" and dimensions is None:
+        raise ValueError("image has an invalid PNG header")
+    return {
+        "name": name,
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "format": image_format,
+        "dimensions": dimensions,
+        "data": data,
+    }
+
+
+def load_edit_image(path):
+    """Read and check an edit image before sending benchmark requests."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError as error:
+        raise SystemExit(f"cannot read --image: {error}")
+    try:
+        return inspect_edit_image(data, Path(path).name)
+    except ValueError as error:
+        raise SystemExit(f"invalid --image: {error}") from error
+
+
+def public_edit_image(edit_image):
+    """Serializable subset of the edit-image description (no raw bytes)."""
+    if not edit_image:
+        return None
+    return {key: value for key, value in edit_image.items() if key != "data"}
+
+
 def percentile(values, quantile):
     if not values:
         return None
@@ -195,6 +246,94 @@ def payload_for(args, prompt, modalities):
     return payload
 
 
+def multipart_body(args, prompt, edit_image):
+    """Build a multipart/form-data body for /v1/images/edits.
+
+    One "image" file part plus the text fields; field names match the
+    vLLM-Omni Image API examples. The boundary is unique per request.
+    """
+    boundary = uuid.uuid4().hex
+    fields = {"model": args.model, "prompt": prompt, "n": "1", "response_format": "b64_json"}
+    if args.size:
+        fields["size"] = args.size
+    parts = []
+    for name, value in fields.items():
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
+        )
+    filename = edit_image["name"].replace('"', "_").replace("\r", "_").replace("\n", "_")
+    parts.append(
+        (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{filename}"\r\n'
+            f'Content-Type: {IMAGE_CONTENT_TYPES[edit_image["format"]]}\r\n\r\n'
+        ).encode("utf-8")
+        + edit_image["data"]
+        + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def request_body(args, prompt, modalities):
+    """Serialized request body and its Content-Type.
+
+    Called before the request timer starts: E2E covers the HTTP request and
+    response validation, not local body construction.
+    """
+    if args.endpoint == "/v1/images/edits":
+        return multipart_body(args, prompt, args.edit_image)
+    return json.dumps(payload_for(args, prompt, modalities)).encode("utf-8"), "application/json"
+
+
+def read_image_response(response, content_type, result, label):
+    """Parse and validate an image API response; fills the result image fields.
+
+    Tiers: decoded PNG with a parseable IHDR header is b64-validated; other
+    recognized formats are b64-unverified; url-only responses are
+    url-unverified (URLs are never downloaded). Unverified responses stay
+    "ok" but are excluded from latency samples by the caller. Returns the
+    parsed document (for usage).
+    """
+    if "application/json" not in content_type.lower():
+        snippet = response.read(1000).decode("utf-8", errors="replace")
+        raise RuntimeError(f"expected JSON, got {content_type!r}: {snippet}")
+    try:
+        document = json.loads(response.read())
+    except (ValueError, UnicodeDecodeError) as error:
+        raise RuntimeError(f"invalid {label} JSON") from error
+    if not isinstance(document, dict):
+        raise RuntimeError(f"invalid {label} response: expected an object")
+    if document.get("error"):
+        raise RuntimeError(f"server error: {str(document['error'])[:500]}")
+    data = document.get("data")
+    if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+        raise RuntimeError(f"invalid {label} response: expected one generated image")
+    encoded = data[0].get("b64_json")
+    if isinstance(encoded, str) and encoded:
+        try:
+            image = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise RuntimeError(f"invalid {label} response: image data is not valid base64") from error
+        result["image_bytes"] = len(image)
+        result["image_format"] = sniff_image_format(image)
+        if result["image_format"] is None:
+            raise RuntimeError(f"invalid {label} response: unrecognized image format")
+        if result["image_format"] == "png":
+            # Signature and IHDR header parsed; completeness and
+            # decodability are not verified.
+            result["image_dimensions"] = png_dimensions(image)
+            if result["image_dimensions"] is None:
+                raise RuntimeError(f"invalid {label} response: invalid PNG IHDR header")
+            result["image_content"] = "b64-validated"
+        else:
+            result["image_content"] = "b64-unverified"
+    elif isinstance(data[0].get("url"), str) and data[0]["url"]:
+        result["image_content"] = "url-unverified"
+    else:
+        raise RuntimeError(f"invalid {label} response: expected b64_json or url")
+    return document
+
+
 def run_request(index, args, prompt, modalities, run_id, session_token=None):
     sent_id = str(uuid.uuid4())
     marker = f"voli-stream-metrics/{run_id}/{index}"
@@ -221,14 +360,15 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
     }
     if args.endpoint == "/v1/embeddings":
         result["embedding_dimensions"] = None
-    if args.endpoint == "/v1/images/generations":
+    if args.endpoint in IMAGE_ENDPOINTS:
         result["image_content"] = None  # b64-validated | b64-unverified | url-unverified
         result["image_format"] = None
         result["image_bytes"] = None
         result["image_dimensions"] = None
-    json_endpoints = ("/v1/embeddings", "/v1/images/generations")
+    json_endpoints = ("/v1/embeddings",) + IMAGE_ENDPOINTS
+    body, body_content_type = request_body(args, prompt, modalities)
     headers = {
-        "Content-Type": "application/json",
+        "Content-Type": body_content_type,
         "Accept": "application/json" if args.endpoint in json_endpoints else "text/event-stream",
         "User-Agent": marker,
         "X-Request-Id": sent_id,
@@ -244,7 +384,7 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
             headers[args.session_header] = session_token
     request = urllib.request.Request(
         endpoint_url(args.url, args.endpoint),
-        data=json.dumps(payload_for(args, prompt, modalities)).encode("utf-8"),
+        data=body,
         headers=headers,
         method="POST",
     )
@@ -262,47 +402,11 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
             if args.session_length:
                 result["session_token_received"] = response.headers.get(args.session_header)
             content_type = response.headers.get("Content-Type", "")
-            if args.endpoint == "/v1/images/generations":
-                if "application/json" not in content_type.lower():
-                    snippet = response.read(1000).decode("utf-8", errors="replace")
-                    raise RuntimeError(f"expected JSON, got {content_type!r}: {snippet}")
-                try:
-                    document = json.loads(response.read())
-                except (ValueError, UnicodeDecodeError) as error:
-                    raise RuntimeError("invalid image-generation JSON") from error
-                if not isinstance(document, dict):
-                    raise RuntimeError("invalid image-generation response: expected an object")
-                if document.get("error"):
-                    raise RuntimeError(f"server error: {str(document['error'])[:500]}")
-                data = document.get("data")
-                if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
-                    raise RuntimeError("invalid image-generation response: expected one generated image")
+            if args.endpoint in IMAGE_ENDPOINTS:
+                label = "image-edit" if args.endpoint == "/v1/images/edits" else "image-generation"
+                document = read_image_response(response, content_type, result, label)
                 if isinstance(document.get("usage"), dict):
                     result["usage"] = document["usage"]
-                encoded = data[0].get("b64_json")
-                if isinstance(encoded, str) and encoded:
-                    try:
-                        image = base64.b64decode(encoded, validate=True)
-                    except (ValueError, binascii.Error) as error:
-                        raise RuntimeError("invalid image-generation response: image data is not valid base64") from error
-                    result["image_bytes"] = len(image)
-                    result["image_format"] = sniff_image_format(image)
-                    if result["image_format"] is None:
-                        raise RuntimeError("invalid image-generation response: unrecognized image format")
-                    if result["image_format"] == "png":
-                        # Signature and IHDR header parsed; completeness and
-                        # decodability are not verified.
-                        result["image_dimensions"] = png_dimensions(image)
-                        if result["image_dimensions"] is None:
-                            raise RuntimeError("invalid image-generation response: invalid PNG IHDR header")
-                        result["image_content"] = "b64-validated"
-                    else:
-                        result["image_content"] = "b64-unverified"
-                elif isinstance(data[0].get("url"), str) and data[0]["url"]:
-                    # URLs are not downloaded; the image content stays unverified.
-                    result["image_content"] = "url-unverified"
-                else:
-                    raise RuntimeError("invalid image-generation response: expected b64_json or url")
                 result["status"] = "ok"
                 return result
             if args.endpoint == "/v1/embeddings":
@@ -868,7 +972,7 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     # Image runs: only responses whose content was verified (PNG signature and
     # header) feed latency samples and rankings; url-only and non-PNG base64
     # responses stay "ok" but unverified, and are reported separately.
-    if args.endpoint == "/v1/images/generations":
+    if args.endpoint in IMAGE_ENDPOINTS:
         latency_valid = [r for r in valid if r.get("image_content") == "b64-validated"]
     else:
         latency_valid = valid
@@ -891,7 +995,7 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
         "_failures": failures,
         "_missing": missing,
     }
-    if args.endpoint == "/v1/images/generations":
+    if args.endpoint in IMAGE_ENDPOINTS:
         run["validated_responses"] = len(latency_valid)
         run["unverified_responses"] = len(valid) - len(latency_valid)
     if score_summary is not None:
@@ -911,6 +1015,7 @@ def print_run_report(run, args, modalities):
     iterations = run["iterations"]
     title = (
         "Embedding results" if args.endpoint == "/v1/embeddings"
+        else "Image edit results" if args.endpoint == "/v1/images/edits"
         else "Image generation results" if args.endpoint == "/v1/images/generations"
         else "Streaming results"
     )
@@ -921,8 +1026,15 @@ def print_run_report(run, args, modalities):
     print(f"  EPP profile:  {run['profile']}")
     print(f"  Scorer:       {run['scorer']}")
     print(f"  Output:       {', '.join(modalities)}")
+    if args.endpoint == "/v1/images/edits":
+        edit_image = public_edit_image(args.edit_image) or {}
+        dimensions = edit_image.get("dimensions")
+        describe = f"{edit_image.get('format')}, {edit_image.get('bytes')} bytes"
+        if dimensions:
+            describe += f", {dimensions[0]}x{dimensions[1]} px"
+        print(f"  Input image:  {edit_image.get('name')} ({describe}, sha256 {edit_image.get('sha256', '')[:12]}…)")
     print(f"  Requests:     {iterations} total, up to {run['concurrency']} concurrent")
-    if args.endpoint == "/v1/images/generations":
+    if args.endpoint in IMAGE_ENDPOINTS:
         print(
             f"  Responses:    {run['validated_responses']} content-verified, "
             f"{run['unverified_responses']} unverified, "
@@ -933,13 +1045,13 @@ def print_run_report(run, args, modalities):
     print(f"  Duration:     {run['duration_seconds']:.2f} s  ({iterations / run['duration_seconds']:.2f} requests/s)")
 
     latency_title = (
-        "Latency (content-verified responses)" if args.endpoint == "/v1/images/generations"
+        "Latency (content-verified responses)" if args.endpoint in IMAGE_ENDPOINTS
         else "Latency (valid responses)"
     )
     print_section(latency_title)
-    if args.endpoint == "/v1/embeddings" or args.endpoint == "/v1/images/generations":
+    if args.endpoint == "/v1/embeddings" or args.endpoint in IMAGE_ENDPOINTS:
         print_latency_table([("End-to-end", samples["e2e_ms"], "ms")])
-        if args.endpoint == "/v1/images/generations" and run["unverified_responses"]:
+        if args.endpoint in IMAGE_ENDPOINTS and run["unverified_responses"]:
             print(
                 f"  {run['unverified_responses']} response(s) with unverified content "
                 "(url or non-PNG base64) are excluded from latency and rankings."
@@ -977,7 +1089,7 @@ def print_run_report(run, args, modalities):
 
     if len(counts) > 1:
         pod_title = (
-            "Latency by pod (content-verified responses)" if args.endpoint == "/v1/images/generations"
+            "Latency by pod (content-verified responses)" if args.endpoint in IMAGE_ENDPOINTS
             else "Latency by pod (valid responses)"
         )
         print_section(pod_title)
@@ -986,7 +1098,7 @@ def print_run_report(run, args, modalities):
             if not pod_results:
                 continue
             print(f"  {pod}")
-            if args.endpoint == "/v1/embeddings" or args.endpoint == "/v1/images/generations":
+            if args.endpoint == "/v1/embeddings" or args.endpoint in IMAGE_ENDPOINTS:
                 print_latency_table([("End-to-end", [r["e2e_ms"] for r in pod_results], "ms")])
             elif args.endpoint == "/v1/audio/speech":
                 print_latency_table([
@@ -1004,6 +1116,15 @@ def print_run_report(run, args, modalities):
     print_section("Notes")
     if args.endpoint == "/v1/embeddings":
         print("  Embeddings are non-streaming; latency covers the complete response.")
+    elif args.endpoint == "/v1/images/edits":
+        print("  Image edits are non-streaming; end-to-end latency covers the HTTP request")
+        print("  (including the multipart upload) and response validation, but not local")
+        print("  multipart construction.")
+        print("  Content verification checks the PNG signature and parses the IHDR header;")
+        print("  it does not prove an image is complete or decodable. The input image is")
+        print("  checked the same way (header check only).")
+        print("  All edit requests reuse the same input image; server-side caching of that")
+        print("  input may warm up across requests.")
     elif args.endpoint == "/v1/images/generations":
         print("  Image generation is non-streaming; end-to-end latency covers the complete")
         print("  response including base64 decoding and the signature/header check.")
@@ -1060,7 +1181,7 @@ def print_suite_report(runs, args, modalities):
             f"{valid_note}  |  "
             f"failed {run['failed_responses']}  |  {run['duration_seconds']:.1f} s"
         )
-        if args.endpoint == "/v1/embeddings" or args.endpoint == "/v1/images/generations":
+        if args.endpoint == "/v1/embeddings" or args.endpoint in IMAGE_ENDPOINTS:
             print(f"     E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms")
         elif args.endpoint == "/v1/audio/speech":
             print(
@@ -1092,6 +1213,10 @@ def print_suite_report(runs, args, modalities):
     print("  Profiles run sequentially; requests within each run use the stated concurrency.")
     if args.endpoint == "/v1/embeddings":
         print("  Embeddings are non-streaming; latency covers the complete response.")
+    elif args.endpoint == "/v1/images/edits":
+        print("  Image edits are non-streaming; latency is reported only for responses with")
+        print("  content-verified PNG output (see the single-run report for details). All edit")
+        print("  requests reuse the same input image; server-side caching may warm up.")
     elif args.endpoint == "/v1/images/generations":
         print("  Image generation is non-streaming; latency is reported only for responses")
         print("  with content-verified PNG output (see the single-run report for details).")
@@ -1126,7 +1251,8 @@ def main():
     parser.add_argument("--modalities", default="text,audio", help="Chat-completions output: text, audio, or text,audio.")
     parser.add_argument("--voice", help="Optional audio voice passed to the API.")
     parser.add_argument("--audio-format", help="Optional audio format passed to the API.")
-    parser.add_argument("--size", help="Optional image size for /v1/images/generations (e.g. 1024x1024). Omitted means the server default, which may vary between servers.")
+    parser.add_argument("--size", help="Optional image size for image endpoints (e.g. 1024x1024). Omitted means the server default, which may vary between servers.")
+    parser.add_argument("--image", type=Path, help="Path to the input image for /v1/images/edits (required for that endpoint). The same image is sent with every request.")
     parser.add_argument("--no-usage", action="store_true", help="Omit stream_options.include_usage.")
     parser.add_argument("--iterations", "-n", type=int, default=10, help="Total requests for a single run or default suite run.")
     parser.add_argument("--concurrency", "-c", type=int, default=1, help="Maximum simultaneous requests per run.")
@@ -1178,11 +1304,16 @@ def main():
     if args.profile is not None and (not args.profile.strip() or "\r" in args.profile or "\n" in args.profile):
         parser.error("--profile must be a nonempty profile name without line breaks")
     plan, suite_mode = suite_plan(args, parser)
-    if args.size and args.endpoint != "/v1/images/generations":
-        parser.error("--size applies only to /v1/images/generations runs")
+    if args.size and args.endpoint not in IMAGE_ENDPOINTS:
+        parser.error("--size applies only to image-generation and image-edit runs")
+    if args.image and args.endpoint != "/v1/images/edits":
+        parser.error("--image applies only to /v1/images/edits runs")
+    if args.endpoint == "/v1/images/edits" and not args.image:
+        parser.error("--image is required for /v1/images/edits runs")
+    args.edit_image = load_edit_image(args.image) if args.endpoint == "/v1/images/edits" else None
     if args.endpoint == "/v1/embeddings":
         modalities = ["embedding"]
-    elif args.endpoint == "/v1/images/generations":
+    elif args.endpoint in IMAGE_ENDPOINTS:
         modalities = ["image"]
     elif args.endpoint == "/v1/audio/speech":
         modalities = ["audio"]
@@ -1224,16 +1355,19 @@ def main():
                 "model": args.model,
                 "endpoint": endpoint_url(args.url, args.endpoint),
                 "modalities": modalities,
+                "image_size": args.size or None if args.endpoint in IMAGE_ENDPOINTS else None,
+                "edit_image": public_edit_image(args.edit_image),
                 "runs": [serializable_run(run) for run in runs],
             }
         else:
             payload = serializable_run(runs[0])
-        if args.endpoint == "/v1/images/generations":
+        if args.endpoint in IMAGE_ENDPOINTS:
             payload.update({
                 "model": args.model,
                 "endpoint": endpoint_url(args.url, args.endpoint),
                 "modalities": modalities,
                 "image_size": args.size or None,
+                "edit_image": public_edit_image(args.edit_image),
             })
         args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
         print(f"\nSaved detailed JSON: {args.output_json}")

@@ -56,7 +56,7 @@ export default function NewRun() {
   const [searchParams] = useSearchParams()
 
   const [name, setName] = useState('')
-  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions' | '/v1/embeddings' | '/v1/images/generations'>('/v1/audio/speech')
+  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions' | '/v1/embeddings' | '/v1/images/generations' | '/v1/images/edits'>('/v1/audio/speech')
   const [model, setModel] = useState('qwen3-tts')
   const [url, setUrl] = useState(DEFAULTS.url)
   const [namespace, setNamespace] = useState(DEFAULTS.namespace)
@@ -88,6 +88,7 @@ export default function NewRun() {
   const [voice, setVoice] = useState('')
   const [audioFormat, setAudioFormat] = useState('')
   const [imageSize, setImageSize] = useState('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
 
   const [sessionLength, setSessionLength] = useState(0)
   const [sessionHeader, setSessionHeader] = useState('x-session-token')
@@ -204,7 +205,9 @@ export default function NewRun() {
       params.tokenizer = tokenizer
       params.modalities = modalities
     }
-    if (endpoint === '/v1/images/generations' && imageSize.trim()) params.image_size = imageSize.trim()
+    if ((endpoint === '/v1/images/generations' || endpoint === '/v1/images/edits') && imageSize.trim()) {
+      params.image_size = imageSize.trim()
+    }
     if ((endpoint === '/v1/audio/speech' || endpoint === '/v1/chat/completions') && voice.trim()) params.voice = voice.trim()
     if ((endpoint === '/v1/audio/speech' || endpoint === '/v1/chat/completions') && audioFormat.trim()) params.audio_format = audioFormat.trim()
     if (sessionLength >= 2) {
@@ -224,6 +227,9 @@ export default function NewRun() {
     }
     if (endpoint === '/v1/chat/completions' && !tokenizer.trim()) {
       return 'A tokenizer is required for /v1/chat/completions runs.'
+    }
+    if (endpoint === '/v1/images/edits' && !imageFile) {
+      return 'An input image is required for /v1/images/edits runs.'
     }
     if (sessionLength === 1) return 'Session length must be 0 (off) or at least 2.'
     return null
@@ -256,7 +262,10 @@ export default function NewRun() {
     setBusy(true)
     setError(null)
     try {
-      const result = await api.createRun({ name: name || null, params: buildParams() })
+      const result = await api.createRun(
+        { name: name || null, params: buildParams() },
+        endpoint === '/v1/images/edits' ? imageFile : null,
+      )
       navigate(`/runs/${result.id}`)
     } catch (cause) {
       setError(String(cause))
@@ -287,13 +296,19 @@ export default function NewRun() {
           <div>
             <label>
               Endpoint
-              <HelpHint text="Choose TTS, chat, text embeddings, or image generation. Chat requires a tokenizer; embeddings and images use non-streaming JSON and report end-to-end latency. Image content is verified only for PNG base64 responses." />
+              <HelpHint text="Choose TTS, chat, text embeddings, image generation, or image editing. Chat requires a tokenizer; embeddings and images use non-streaming JSON and report end-to-end latency. Image content is verified only for PNG base64 responses; edits need an uploaded input image." />
             </label>
-            <select value={endpoint} onChange={(e) => setEndpoint(e.target.value as typeof endpoint)}>
+            <select value={endpoint} onChange={(e) => {
+              const next = e.target.value as typeof endpoint
+              setEndpoint(next)
+              if (next !== '/v1/images/edits') setImageFile(null)
+              setPreview(null)
+            }}>
               <option value="/v1/audio/speech">/v1/audio/speech (TTS)</option>
               <option value="/v1/chat/completions">/v1/chat/completions (chat)</option>
               <option value="/v1/embeddings">/v1/embeddings (text embeddings)</option>
               <option value="/v1/images/generations">/v1/images/generations (image generation)</option>
+              <option value="/v1/images/edits">/v1/images/edits (image editing)</option>
             </select>
           </div>
           <div>
@@ -503,13 +518,23 @@ export default function NewRun() {
             <input type="text" value={audioFormat} onChange={(e) => setAudioFormat(e.target.value)} placeholder="pcm" />
           </div>
           </>}
-          {endpoint === '/v1/images/generations' && (
+          {(endpoint === '/v1/images/generations' || endpoint === '/v1/images/edits') && (
           <div>
             <label>
               Size (optional)
-              <HelpHint text="Requested image size, e.g. 1024x1024. Left empty, the server default applies — it may vary between servers, so comparisons across runs with unknown sizes are flagged." />
+              <HelpHint text="Requested output image size, e.g. 1024x1024. Left empty, the server default applies — it may vary between servers, so comparisons across runs with unknown sizes are flagged." />
             </label>
             <input type="text" value={imageSize} onChange={(e) => setImageSize(e.target.value)} placeholder="1024x1024" />
+          </div>
+          )}
+          {endpoint === '/v1/images/edits' && (
+          <div>
+            <label>
+              Input image (required)
+              <HelpHint text="The image to edit, uploaded with every request (multipart). Stored with the run; its hash is recorded so comparisons can detect different inputs. Checked by header only — completeness is not verified. Reusing one image across requests may create warm-cache effects on the server." />
+            </label>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={(e) => setImageFile(e.target.files?.[0] ?? null)} />
           </div>
           )}
         </div>
@@ -607,6 +632,9 @@ export default function NewRun() {
         {preview && (
           <div>
             <h2>Command preview</h2>
+            {endpoint === '/v1/images/edits' && (
+              <p>YOUR_IMAGE_PATH is a placeholder. The uploaded image is stored when the run starts.</p>
+            )}
             {preview.map((argv, index) => (
               <pre key={index} className="log">{argv}</pre>
             ))}

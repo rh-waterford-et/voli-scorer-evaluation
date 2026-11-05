@@ -13,7 +13,7 @@ and runs the benchmark as a subprocess.
 
 | Area | Details |
 |---|---|
-| New run | Select profiles (built-in map or live cluster ConfigMap), load settings (`--run NxC`), prompts, and common flags. "Show command" previews the exact command lines. Nothing is pre-selected; `default` (no `EPP-Profile` header → cluster's default profile) is an explicit opt-in listed last. |
+| New run | Select profiles (built-in map or live cluster ConfigMap), load settings (`--run NxC`), prompts, and common flags. "Show command" previews the command lines; image edits use a placeholder for the uploaded file. Nothing is pre-selected; `default` (no `EPP-Profile` header → cluster's default profile) is an explicit opt-in listed last. |
 | Live progress | Per-profile status, the script's progress lines, and the full stdout/stderr log stream (SSE). Cancel mid-run. |
 | Results | Sortable table per profile × load (TTFA/TTFT/TPOT/E2E, mean/p50/p99), expandable to full metrics, pod routing distribution, and per-request details including raw EPP scores, weighted contributions, and picker selection. |
 | Charts | p50/p99 comparison bars across profile-runs; latency histograms per run. |
@@ -104,7 +104,7 @@ uv pip install --python dashboard/.venv/bin/python -r dashboard/backend/requirem
 ```
 
 For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
-`transformers` into the same venv (TTS, embeddings and image-generation runs
+`transformers` into the same venv (TTS, embeddings and image runs
 need nothing extra):
 
 ```bash
@@ -120,23 +120,21 @@ dashboard/.venv/bin/uvicorn app:app --app-dir dashboard/backend --port 8765
 
 Then open <http://localhost:8765>.
 
-For `/v1/embeddings`, each request sends one text input and validates a
-nonempty numeric vector. Results record its dimension and client-observed
-end-to-end latency; streaming metrics such as TTFT and TTFA do not apply.
+### Endpoint behavior
 
-For `/v1/images/generations`, each request sends one prompt with `n: 1` and
-`response_format: b64_json` (plus the optional size). Responses are validated
-in tiers: a decoded PNG whose signature and IHDR header parse counts as
-`b64-validated` (dimensions recorded); other recognized image formats count as
-`b64-unverified`; url-only responses count as `url-unverified` — URLs are never
-downloaded. Unverified responses stay `ok` but are excluded from latency
-samples and Compare rankings, and are reported separately
-(`validated_responses` / `unverified_responses`); the valid count includes
-only verified responses. Validation checks the PNG signature and IHDR header
-only; it does not prove the image is complete or
-decodable, and E2E includes base64 decoding. The requested size is stored with
-the run; Compare warns about unknown (server-default) sizes and blocks
-rankings when sizes differ.
+- `/v1/chat/completions` and `/v1/audio/speech` report streaming latency
+  metrics where applicable, as well as end-to-end latency.
+- `/v1/embeddings` reports the returned vector's dimension and end-to-end
+  latency. Embeddings do not stream.
+- `/v1/images/generations` and `/v1/images/edits` request one image and
+  report end-to-end latency. Only base64 PNG responses with a valid header
+  count towards latency; other recognized formats and URL-only responses are
+  reported as unverified and excluded. The header check does not verify the
+  whole image.
+- Image edits use one uploaded input image, stored with the run and deleted
+  with it. Reusing the same input can warm server caches; edit latency includes
+  the upload and response processing. Compare blocks rankings for different
+  requested image sizes or edit inputs and warns when these are unknown.
 
 ### Frontend dev mode
 
@@ -200,7 +198,7 @@ subprocess is not tracked); avoid restarting the backend mid-run.
 | `GET /api/profiles` | Script profile map (local synced file if present, else tracked default). |
 | `GET /api/profiles/check?endpoint=…` | Per-profile scorer operability: curated caveats + live prerequisite checks (read-only). |
 | `GET /api/profiles/cluster?namespace=…` | Live EPP profiles from the ConfigMap (read-only). |
-| `POST /api/runs` | Start a run; body `{name?, params}`. |
+| `POST /api/runs` | Start a run with JSON `{name?, params}`. Image edits use multipart form data with a `params` JSON field and an `image` file. |
 | `POST /api/runs/preview` | Show the command lines without running. |
 | `GET /api/runs` | History (dashboard runs + `reports/*.json`). |
 | `GET /api/runs/{id}` | Run detail with merged results. |

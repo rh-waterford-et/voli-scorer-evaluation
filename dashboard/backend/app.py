@@ -12,9 +12,10 @@ import json
 import queue
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 import bench
 import builder
@@ -239,8 +240,55 @@ def preview_run(request: CreateRunRequest):
 
 
 @app.post("/api/runs")
-def create_run(request: CreateRunRequest):
-    run = manager.create(request.name, request.params)
+async def create_run(request: Request):
+    """Create a run.
+
+    Accepts the usual JSON body, or multipart/form-data with a "params"
+    field (the same JSON as a string) plus an "image" file for
+    /v1/images/edits runs. The uploaded image is stored inside the run
+    directory, so deleting the run removes it; its hash and metadata are
+    kept in the run params and results for comparison checks.
+    """
+    upload_data = None
+    upload_name = None
+    if request.headers.get("content-type", "").startswith("multipart/"):
+        async with request.form() as form:
+            if "params" not in form:
+                raise HTTPException(status_code=400, detail="multipart requests need a 'params' field")
+            try:
+                payload = json.loads(str(form["params"]))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="the 'params' field must contain JSON")
+            file = form.get("image")
+            if file is not None and hasattr(file, "read"):
+                upload_data = await file.read()
+                upload_name = getattr(file, "filename", None)
+    else:
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise HTTPException(status_code=422, detail="request body must contain valid JSON") from error
+    try:
+        body = CreateRunRequest.model_validate(payload)
+    except ValidationError as error:
+        raise RequestValidationError(error.errors()) from error
+    params = body.params
+    run_id, _ = manager.plan(params)
+    if params.endpoint == "/v1/images/edits":
+        if upload_data is None:
+            raise HTTPException(status_code=400, detail="/v1/images/edits runs require an uploaded image")
+        from stream_metrics import inspect_edit_image
+
+        try:
+            inspect_edit_image(upload_data, upload_name or "input-image")
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        path, info = store.save_run_image(run_id, upload_data, upload_name or "input-image")
+        params.image = str(path)
+        params.image_info = info
+    elif upload_data is not None:
+        raise HTTPException(status_code=400, detail="image upload is only valid for /v1/images/edits runs")
+    run = manager.create(body.name, params, run_id=run_id)
     return {"id": run.run_id}
 
 

@@ -6,12 +6,14 @@ A dashboard "run" is a directory:
         meta.json                    run metadata (status, params, attempts)
         log.txt                      full merged stdout/stderr of every attempt
         prompts.txt                  optional multi-prompt input (if provided)
+        input/<filename>             optional uploaded edit image (if provided)
         profiles/<safe-name>.json    stream_metrics.py --output-json result
 
 Run ids from the repository's reports/ directory are exposed read-only with
 the "report:" prefix and share the same normalized shape.
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -57,12 +59,14 @@ def normalize_output(document) -> Optional[dict]:
             "endpoint": document.get("endpoint"),
             "modalities": document.get("modalities", []),
             "image_size": document.get("image_size"),
+            "edit_image": document.get("edit_image"),
             "runs": document["runs"],
         }
     if "profile" in document and "metrics" in document:
         return {
             "model": document.get("model"), "endpoint": document.get("endpoint"),
             "modalities": document.get("modalities", []), "image_size": document.get("image_size"),
+            "edit_image": document.get("edit_image"),
             "runs": [document],
         }
     return None
@@ -104,6 +108,27 @@ class RunStore:
 
     def prompts_path(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "prompts.txt"
+
+    def save_run_image(self, run_id: str, data: bytes, filename: str) -> tuple[Path, dict]:
+        """Store an uploaded edit image inside the run directory.
+
+        Living with the run means run deletion removes it. The metadata dict
+        (name, bytes, sha256) is kept in run params so comparisons can detect
+        different inputs even after the file is gone.
+        """
+        safe_name = (Path(filename or "input-image").name or "input-image").replace("\x00", "_")
+        if safe_name in (".", "..") or len(safe_name.encode("utf-8")) > 255:
+            safe_name = "input-image"
+        path = self.run_dir(run_id) / "input" / safe_name
+        with self._lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        info = {
+            "name": safe_name,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+        return path, info
 
     def create(self, run_id: str, name: str, params: dict) -> dict:
         with self._lock:
@@ -174,7 +199,7 @@ class RunStore:
     def load_results(self, meta: dict) -> Optional[dict]:
         """Merge every completed attempt's result file into one document."""
         runs = []
-        model = endpoint = image_size = None
+        model = endpoint = image_size = edit_image = None
         modalities: list = []
         for attempt in meta.get("profiles", []):
             relative = attempt.get("result_file")
@@ -193,6 +218,7 @@ class RunStore:
             model = model or normalized["model"]
             endpoint = endpoint or normalized["endpoint"]
             image_size = image_size or normalized.get("image_size")
+            edit_image = edit_image or normalized.get("edit_image")
             modalities = modalities or normalized["modalities"] or []
             runs.extend(normalized["runs"])
         if not runs:
@@ -203,12 +229,16 @@ class RunStore:
         if endpoint is None:
             endpoint = params.get("endpoint")
         if not modalities:
-            modalities = {"/v1/audio/speech": ["audio"], "/v1/embeddings": ["embedding"], "/v1/images/generations": ["image"]}.get(
-                params.get("endpoint"), []
-            )
+            modalities = {
+                "/v1/audio/speech": ["audio"],
+                "/v1/embeddings": ["embedding"],
+                "/v1/images/generations": ["image"],
+                "/v1/images/edits": ["image"],
+            }.get(params.get("endpoint"), [])
         image_size = image_size or params.get("image_size")
+        edit_image = edit_image or params.get("image_info")
         return {"model": model, "endpoint": endpoint, "modalities": modalities,
-                "image_size": image_size, "runs": runs}
+                "image_size": image_size, "edit_image": edit_image, "runs": runs}
 
     def ensure_summary(self, meta: dict) -> Optional[dict]:
         summary = meta.get("summary")

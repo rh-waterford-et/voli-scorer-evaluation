@@ -28,6 +28,11 @@
           "endpoints": ["/v1/images/generations"],
           "status": "unknown",
           "reason": "Prompt-text token estimation for image-generation requests merged upstream (llm-d-router PR #3721) but is not in v0.11.0/v1.0.0 and has not been verified on any deployed image; predictor behavior for image workloads is therefore unverified and depends on the deployed router version."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "unknown",
+          "reason": "Prompt-text estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified; it also excludes the reference-image input and output-generation cost (issue #3720), so the estimate covers only the text prompt and predictor behavior is unverified."
         }
       ]
     },
@@ -42,6 +47,11 @@
           "endpoints": ["/v1/images/generations"],
           "status": "unknown",
           "reason": "Prompt-text estimation for image generation merged upstream (PR #3721) but is version-dependent and unverified on a deployment; estimated prompt tokens do not match engine KV blocks, so cache-aware routing quality is unverified."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "unknown",
+          "reason": "Prompt-text estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified, and the reference-image input is excluded from the estimate (issue #3720); cache-aware routing quality for edits is unverified."
         }
       ]
     },
@@ -56,6 +66,11 @@
           "endpoints": ["/v1/images/generations"],
           "status": "unknown",
           "reason": "Input-length estimation for image generation merged upstream (PR #3721) but is version-dependent and unverified; it also excludes output-generation cost (image size, inference steps — issue #3720), so length-based decisions may not reflect real request cost."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "unknown",
+          "reason": "Input-length estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified; it excludes the reference-image input and output-generation cost (issue #3720), so length-based decisions may not reflect real request cost."
         }
       ]
     },
@@ -70,6 +85,11 @@
           "endpoints": ["/v1/images/generations"],
           "status": "unknown",
           "reason": "Prompt-text estimation for image generation merged upstream (PR #3721) but is version-dependent and unverified; a prompt-only estimate also excludes output-generation cost (issue #3720), so token-load comparisons may not reflect real load."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "unknown",
+          "reason": "Prompt-text estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified, and it excludes the reference-image input and output-generation cost (issue #3720), so token-load comparisons may not reflect real load."
         }
       ]
     },
@@ -83,7 +103,12 @@
         {
           "endpoints": ["/v1/images/generations"],
           "status": "limited",
-          "reason": "Prefix data for image generation is unverified on current deployments; until verified, requests are effectively treated as cold and this exercises LRU spreading only."
+          "reason": "Prefix data for image generation is unverified on current deployments. If prefix data is missing, requests are treated as cold and this exercises LRU spreading only."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "limited",
+          "reason": "Prefix data for image edits is unverified on current deployments. If prefix data is missing, requests are treated as cold and this exercises LRU spreading only."
         }
       ]
     },
@@ -98,6 +123,11 @@
           "endpoints": ["/v1/images/generations"],
           "status": "not-useful",
           "reason": "Image-generation requests take a text prompt and supply no multimodal input media, so there are no input embeddings to reuse (structural, not version-dependent)."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "unknown",
+          "reason": "Edits supply an input image, but in the local (older) router checkout the parser skips uploaded file parts, so the scorer may never see the reference image; verify the deployed router version before concluding whether this scorer has a usable signal for edits."
         }
       ]
     },
@@ -121,6 +151,11 @@
           "endpoints": ["/v1/images/generations"],
           "status": "limited",
           "reason": "Reads stage-0 KV usage; diffusion-based image generation may not use KV cache the same way as autoregressive models, so treat results as exploratory."
+        },
+        {
+          "endpoints": ["/v1/images/edits"],
+          "status": "limited",
+          "reason": "Reads stage-0 KV usage; diffusion-based image editing may not use KV cache the same way as autoregressive models, so treat results as exploratory."
         }
       ]
     }

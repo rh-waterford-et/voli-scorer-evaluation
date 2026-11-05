@@ -252,7 +252,9 @@ export default function RunView() {
     const params = detail.params
     const endpoint =
       params?.endpoint ??
-      (detail.results.endpoint?.includes('/v1/images/generations')
+      (detail.results.endpoint?.includes('/v1/images/edits')
+        ? '/v1/images/edits'
+        : detail.results.endpoint?.includes('/v1/images/generations')
         ? '/v1/images/generations'
         : detail.results.endpoint?.includes('/v1/embeddings')
         ? '/v1/embeddings'
@@ -467,6 +469,13 @@ export default function RunView() {
             <>
               {' '}· gateway <code>{params.url}</code>
               {' '}· namespace <code>{params.namespace}</code>
+            </>
+          )}
+          {detail.results?.edit_image && (
+            <>
+              {' '}· input image <code>{detail.results.edit_image.name ?? '—'}</code>
+              {' '}({detail.results.edit_image.bytes ?? '—'} B, sha256{' '}
+              <code>{(detail.results.edit_image.sha256 ?? '').slice(0, 12) || '—'}</code>)
             </>
           )}
         </p>

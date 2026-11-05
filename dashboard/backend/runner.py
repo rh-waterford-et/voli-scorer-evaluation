@@ -286,14 +286,17 @@ class RunManager:
         return run_id, attempts
 
     def preview(self, params) -> dict:
+        if params.endpoint == "/v1/images/edits" and not params.image:
+            # The upload is stored only when the run is started.
+            params = params.model_copy(update={"image": "YOUR_IMAGE_PATH"})
         run_id, attempts = self.plan(params)
         return {
             "run_id": run_id,
             "profiles": [{"name": a["name"], "argv": a["argv"]} for a in attempts],
         }
 
-    def create(self, name: Optional[str], params) -> ManagedRun:
-        run_id, attempts = self.plan(params)
+    def create(self, name: Optional[str], params, run_id: Optional[str] = None) -> ManagedRun:
+        run_id, attempts = self.plan(params, run_id)
         profiles = params.profile_names
         label = (name or "").strip()
         if not label:

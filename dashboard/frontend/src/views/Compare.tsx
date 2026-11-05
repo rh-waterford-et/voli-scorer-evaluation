@@ -86,7 +86,9 @@ export default function Compare() {
     const first = details[0]
     const endpoint =
       first.params?.endpoint ??
-      (first.results?.endpoint?.includes('/v1/images/generations')
+      (first.results?.endpoint?.includes('/v1/images/edits')
+        ? '/v1/images/edits'
+        : first.results?.endpoint?.includes('/v1/images/generations')
         ? '/v1/images/generations'
         : first.results?.endpoint?.includes('/v1/embeddings')
         ? '/v1/embeddings'
@@ -160,17 +162,35 @@ export default function Compare() {
     detail.params ? detail.params.session_length ?? 0 : null
   // Requested size; null = server default or missing report metadata,
   // undefined = not an image run.
+  const isImageRun = (detail: RunDetail): boolean =>
+    detail.params?.endpoint === '/v1/images/edits' ||
+    detail.params?.endpoint === '/v1/images/generations' ||
+    (detail.results?.endpoint ?? '').includes('/v1/images/edits') ||
+    (detail.results?.endpoint ?? '').includes('/v1/images/generations')
   const imageSizeOf = (detail: RunDetail): string | null | undefined => {
-    const isImage =
-      detail.params?.endpoint === '/v1/images/generations' ||
-      (detail.results?.endpoint ?? '').includes('/v1/images/generations')
-    if (!isImage) return undefined
+    if (!isImageRun(detail)) return undefined
     return (detail.params?.image_size ?? detail.results?.image_size ?? '').trim() || null
   }
   const imageSizes = details.map(imageSizeOf)
+  // Edit runs: the input image dominates request cost. Hash comes from the
+  // saved results (works for imported reports) or the run params; null =
+  // missing metadata, undefined = not an edit run.
+  const editImageHashOf = (detail: RunDetail): string | null | undefined => {
+    const isEdit =
+      detail.params?.endpoint === '/v1/images/edits' ||
+      (detail.results?.endpoint ?? '').includes('/v1/images/edits')
+    if (!isEdit) return undefined
+    return (
+      detail.results?.edit_image?.sha256 ??
+      detail.params?.image_info?.sha256 ??
+      null
+    )
+  }
+  const editImageHashes = details.map(editImageHashOf)
   const modalitiesOf = (detail: RunDetail): string =>
     (detail.results?.modalities ?? []).join(',') ||
-    (detail.params?.endpoint === '/v1/images/generations'
+    (detail.params?.endpoint === '/v1/images/edits' ||
+      detail.params?.endpoint === '/v1/images/generations'
       ? 'image'
       : detail.params?.endpoint === '/v1/embeddings'
       ? 'embedding'
@@ -210,6 +230,21 @@ export default function Compare() {
     comparisonWarnings.push(
       `${unknownImageSizes} of the selected image run${unknownImageSizes === 1 ? '' : 's'} ` +
         'have an unknown image size (server default or missing metadata); sizes may differ between runs.',
+    )
+  }
+
+  // Edit runs: differing input images dominate request cost and block
+  // rankings; missing hashes only warn (imports or stripped metadata).
+  const anyEditRun = editImageHashes.some((value) => value !== undefined)
+  const knownEditHashes = Array.from(new Set(editImageHashes.filter((value): value is string => value != null)))
+  const missingEditHashes = editImageHashes.filter((value) => value === null).length
+  if (anyEditRun && knownEditHashes.length > 1) {
+    mismatched.push('input images (different edit inputs)')
+  }
+  if (anyEditRun && knownEditHashes.length <= 1 && missingEditHashes > 0) {
+    comparisonWarnings.push(
+      `${missingEditHashes} of the selected image-edit run${missingEditHashes === 1 ? '' : 's'} ` +
+        'have no recorded input-image hash; the inputs may differ between runs.',
     )
   }
 

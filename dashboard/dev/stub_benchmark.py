@@ -15,6 +15,7 @@ Set STUB_FAIL=1 to simulate a benchmark failure (nonzero exit, no JSON).
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -35,6 +36,8 @@ parser.add_argument("--profile", default="default")
 parser.add_argument("--run", action="append", default=[])
 parser.add_argument("--output-json", type=Path, required=True)
 parser.add_argument("--endpoint", default="/v1/audio/speech")
+parser.add_argument("--size", default=None)
+parser.add_argument("--image", default=None)
 args, _unknown = parser.parse_known_args()
 
 
@@ -63,7 +66,8 @@ settings = [run_setting(text) for text in args.run] or [(10, 1)]
 rng = random.Random(f"{args.profile}-{args.endpoint}")
 pods = ["stub-tts-a-7d9f4c", "stub-tts-b-2b6e81"]
 scorer = f"stub-{args.profile}-scorer"
-image = args.endpoint == "/v1/images/generations"
+image = args.endpoint in ("/v1/images/generations", "/v1/images/edits")
+edit = args.endpoint == "/v1/images/edits"
 runs_out = []
 
 for iterations, concurrency in settings:
@@ -85,7 +89,7 @@ for iterations, concurrency in settings:
         else:
             failures += 1
         embedding = args.endpoint == "/v1/embeddings"
-        image = args.endpoint == "/v1/images/generations"
+        image = args.endpoint in ("/v1/images/generations", "/v1/images/edits")
         results.append(
             {
                 "iteration": index,
@@ -146,10 +150,21 @@ payload = (
         "modalities": {
             "/v1/embeddings": ["embedding"],
             "/v1/images/generations": ["image"],
+            "/v1/images/edits": ["image"],
         }.get(args.endpoint, ["audio"]),
         "runs": runs_out,
     }
 )
+if image:
+    payload["image_size"] = args.size
+if edit:
+    image_path = Path(args.image)
+    image_data = image_path.read_bytes()
+    payload["edit_image"] = {
+        "name": image_path.name,
+        "bytes": len(image_data),
+        "sha256": hashlib.sha256(image_data).hexdigest(),
+    }
 args.output_json.parent.mkdir(parents=True, exist_ok=True)
 args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
 print(f"\nSaved detailed JSON: {args.output_json}", flush=True)

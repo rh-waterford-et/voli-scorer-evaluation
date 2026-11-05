@@ -71,8 +71,19 @@ export const api = {
     }
   },
 
-  createRun: (body: { name?: string | null; params: unknown }) =>
-    postJSON<{ id: string }>('/api/runs', body),
+  createRun: (body: { name?: string | null; params: unknown }, image?: File | null) => {
+    if (!image) return postJSON<{ id: string }>('/api/runs', body)
+    const form = new FormData()
+    form.append('params', JSON.stringify(body))
+    form.append('image', image)
+    return fetch('/api/runs', { method: 'POST', body: form }).then(async (response) => {
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null)
+        throw new Error(detail?.detail || `${response.status} ${response.statusText}`)
+      }
+      return response.json() as Promise<{ id: string }>
+    })
+  },
 
   previewRun: (body: { name?: string | null; params: unknown }) =>
     postJSON<{ run_id: string; profiles: { name: string; argv: string[] }[] }>('/api/runs/preview', body),

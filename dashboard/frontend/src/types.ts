@@ -123,6 +123,14 @@ export interface RunSummary {
   unverified?: number
 }
 
+export interface EditImageInfo {
+  name?: string | null
+  bytes?: number | null
+  sha256?: string | null
+  format?: string | null
+  dimensions?: number[] | null
+}
+
 export interface RunParams {
   endpoint: string
   model: string
@@ -135,6 +143,8 @@ export interface RunParams {
   voice?: string | null
   audio_format?: string | null
   image_size?: string | null
+  image?: string | null
+  image_info?: EditImageInfo | null
   tokenizer?: string | null
   api_key?: string | null
   session_length?: number
@@ -159,6 +169,7 @@ export interface ResultsDoc {
   endpoint: string | null
   modalities: string[]
   image_size?: string | null
+  edit_image?: EditImageInfo | null
   runs: ScriptRun[]
 }
 
