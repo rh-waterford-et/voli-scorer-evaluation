@@ -86,7 +86,9 @@ export default function Compare() {
     const first = details[0]
     const endpoint =
       first.params?.endpoint ??
-      (first.results?.endpoint?.includes('/v1/embeddings')
+      (first.results?.endpoint?.includes('/v1/images/generations')
+        ? '/v1/images/generations'
+        : first.results?.endpoint?.includes('/v1/embeddings')
         ? '/v1/embeddings'
         : first.results?.endpoint?.includes('/v1/audio/speech')
         ? '/v1/audio/speech'
@@ -156,9 +158,24 @@ export default function Compare() {
   }
   const sessionOf = (detail: RunDetail): number | null =>
     detail.params ? detail.params.session_length ?? 0 : null
+  // Requested size; null = server default or missing report metadata,
+  // undefined = not an image run.
+  const imageSizeOf = (detail: RunDetail): string | null | undefined => {
+    const isImage =
+      detail.params?.endpoint === '/v1/images/generations' ||
+      (detail.results?.endpoint ?? '').includes('/v1/images/generations')
+    if (!isImage) return undefined
+    return (detail.params?.image_size ?? detail.results?.image_size ?? '').trim() || null
+  }
+  const imageSizes = details.map(imageSizeOf)
   const modalitiesOf = (detail: RunDetail): string =>
     (detail.results?.modalities ?? []).join(',') ||
-    (detail.params?.endpoint === '/v1/embeddings' ? 'embedding' : detail.params?.modalities) || '—'
+    (detail.params?.endpoint === '/v1/images/generations'
+      ? 'image'
+      : detail.params?.endpoint === '/v1/embeddings'
+      ? 'embedding'
+      : detail.params?.modalities) ||
+    '—'
 
   const models = Array.from(new Set(details.map((d) => d.results?.model ?? d.params?.model ?? '—')))
   const endpoints = Array.from(
@@ -178,6 +195,23 @@ export default function Compare() {
   if (prompts.length > 1) mismatched.push('prompts')
   if (modalities.length > 1) mismatched.push('output modalities')
   if (sessions.length > 1) mismatched.push(`session settings (lengths ${sessions.join(' vs ')})`)
+
+  // Image runs: differing requested sizes dominate generation cost, so they
+  // block rankings; unknown sizes (server default) only warn, because a
+  // stable server default may still be comparable.
+  const anyImageRun = imageSizes.some((value) => value !== undefined)
+  const knownImageSizes = Array.from(new Set(imageSizes.filter((value): value is string => value != null)))
+  const unknownImageSizes = imageSizes.filter((value) => value === null).length
+  if (anyImageRun && knownImageSizes.length > 1) {
+    mismatched.push(`image sizes (${knownImageSizes.join(' vs ')})`)
+  }
+  const comparisonWarnings: string[] = []
+  if (anyImageRun && knownImageSizes.length <= 1 && unknownImageSizes > 0) {
+    comparisonWarnings.push(
+      `${unknownImageSizes} of the selected image run${unknownImageSizes === 1 ? '' : 's'} ` +
+        'have an unknown image size (server default or missing metadata); sizes may differ between runs.',
+    )
+  }
 
   // Profiles whose scorers have no usable signal (unsupported / not-useful /
   // missing prerequisites) make rankings misleading: a "deaf" scorer can win.
@@ -354,6 +388,12 @@ export default function Compare() {
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {comparisonWarnings.length > 0 && (
+        <div className="panel warn-text">
+          <strong>Comparison caveat:</strong> {comparisonWarnings.join(' ')}
         </div>
       )}
 

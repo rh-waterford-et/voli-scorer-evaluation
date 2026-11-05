@@ -13,7 +13,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings")
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations")
 
 
 class LoadSetting(BaseModel):
@@ -26,7 +26,7 @@ class LoadSetting(BaseModel):
 class RunParams(BaseModel):
     """Benchmark parameters; mirrors the stream_metrics.py flags we expose."""
 
-    endpoint: Literal["/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings"] = "/v1/audio/speech"
+    endpoint: Literal["/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations"] = "/v1/audio/speech"
     model: str = Field(default="qwen3-tts", min_length=1)
     url: str = Field(default="http://10.6.62.51:31670", min_length=1)
     # Required: the caller picks profiles explicitly. "default" is a valid
@@ -39,6 +39,7 @@ class RunParams(BaseModel):
     modalities: str = "text,audio"  # chat-completions output only
     voice: Optional[str] = None
     audio_format: Optional[str] = None
+    image_size: Optional[str] = None  # /v1/images/generations only; None = server default
     tokenizer: Optional[str] = None  # required for /v1/chat/completions
     api_key: Optional[str] = None
 
@@ -113,9 +114,11 @@ class RunParams(BaseModel):
             argv += ["--modalities", self.modalities]
             if self.no_usage:
                 argv.append("--no-usage")
-        if self.voice and self.endpoint != "/v1/embeddings":
+        if self.image_size and self.endpoint == "/v1/images/generations":
+            argv += ["--size", self.image_size.strip()]
+        if self.voice and self.endpoint in ("/v1/audio/speech", "/v1/chat/completions"):
             argv += ["--voice", self.voice]
-        if self.audio_format and self.endpoint != "/v1/embeddings":
+        if self.audio_format and self.endpoint in ("/v1/audio/speech", "/v1/chat/completions"):
             argv += ["--audio-format", self.audio_format]
         if self.session_length >= 2:
             argv += ["--session-length", str(self.session_length)]

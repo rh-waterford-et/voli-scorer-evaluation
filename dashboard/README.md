@@ -104,7 +104,8 @@ uv pip install --python dashboard/.venv/bin/python -r dashboard/backend/requirem
 ```
 
 For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
-`transformers` into the same venv (TTS and embeddings runs need nothing extra):
+`transformers` into the same venv (TTS, embeddings and image-generation runs
+need nothing extra):
 
 ```bash
 uv pip install --python dashboard/.venv/bin/python transformers
@@ -122,6 +123,20 @@ Then open <http://localhost:8765>.
 For `/v1/embeddings`, each request sends one text input and validates a
 nonempty numeric vector. Results record its dimension and client-observed
 end-to-end latency; streaming metrics such as TTFT and TTFA do not apply.
+
+For `/v1/images/generations`, each request sends one prompt with `n: 1` and
+`response_format: b64_json` (plus the optional size). Responses are validated
+in tiers: a decoded PNG whose signature and IHDR header parse counts as
+`b64-validated` (dimensions recorded); other recognized image formats count as
+`b64-unverified`; url-only responses count as `url-unverified` — URLs are never
+downloaded. Unverified responses stay `ok` but are excluded from latency
+samples and Compare rankings, and are reported separately
+(`validated_responses` / `unverified_responses`); the valid count includes
+only verified responses. Validation checks the PNG signature and IHDR header
+only; it does not prove the image is complete or
+decodable, and E2E includes base64 decoding. The requested size is stored with
+the run; Compare warns about unknown (server-default) sizes and blocks
+rankings when sizes differ.
 
 ### Frontend dev mode
 

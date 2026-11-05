@@ -22,7 +22,12 @@
         {
           "endpoints": ["/v1/audio/speech"],
           "status": "unsupported",
-          "reason": "Router token estimator cannot process /v1/audio/speech request bodies, so the predictor receives no training data (re-verified against v0.11.0, v1.0.0 and main on 2026-10-22)."
+          "reason": "Router token estimator cannot process /v1/audio/speech request bodies, so the predictor receives no training data (re-verified against v0.11.0, v1.0.0 and main on 2026-10-22; a fix, PR #3712, merged to main on 2026-11-02 but is not in a release and is unverified on a deployment)."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "unknown",
+          "reason": "Prompt-text token estimation for image-generation requests merged upstream (llm-d-router PR #3721) but is not in v0.11.0/v1.0.0 and has not been verified on any deployed image; predictor behavior for image workloads is therefore unverified and depends on the deployed router version."
         }
       ]
     },
@@ -32,6 +37,11 @@
           "endpoints": ["/v1/audio/speech"],
           "status": "unsupported",
           "reason": "Token estimator gap: no usable prefix-match data for TTS prompts, so cache reuse cannot be compared."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "unknown",
+          "reason": "Prompt-text estimation for image generation merged upstream (PR #3721) but is version-dependent and unverified on a deployment; estimated prompt tokens do not match engine KV blocks, so cache-aware routing quality is unverified."
         }
       ]
     },
@@ -41,6 +51,11 @@
           "endpoints": ["/v1/audio/speech"],
           "status": "unsupported",
           "reason": "TTS tokenization fails, so the input length reads as zero and length-based decisions are meaningless."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "unknown",
+          "reason": "Input-length estimation for image generation merged upstream (PR #3721) but is version-dependent and unverified; it also excludes output-generation cost (image size, inference steps — issue #3720), so length-based decisions may not reflect real request cost."
         }
       ]
     },
@@ -50,6 +65,11 @@
           "endpoints": ["/v1/audio/speech"],
           "status": "unsupported",
           "reason": "Missing TTS input-token estimate makes the token-load comparison across pods unreliable."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "unknown",
+          "reason": "Prompt-text estimation for image generation merged upstream (PR #3721) but is version-dependent and unverified; a prompt-only estimate also excludes output-generation cost (issue #3720), so token-load comparisons may not reflect real load."
         }
       ]
     },
@@ -59,6 +79,11 @@
           "endpoints": ["/v1/audio/speech"],
           "status": "limited",
           "reason": "Without prefix data every request is treated as cold: this exercises LRU spreading only, not cache-aware routing."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "limited",
+          "reason": "Prefix data for image generation is unverified on current deployments; until verified, requests are effectively treated as cold and this exercises LRU spreading only."
         }
       ]
     },
@@ -68,6 +93,11 @@
           "endpoints": ["/v1/audio/speech"],
           "status": "not-useful",
           "reason": "Text-input TTS produces audio but supplies no multimodal input media, so there are no embeddings to reuse."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "not-useful",
+          "reason": "Image-generation requests take a text prompt and supply no multimodal input media, so there are no input embeddings to reuse (structural, not version-dependent)."
         }
       ]
     },
@@ -86,6 +116,11 @@
           "endpoints": ["/v1/audio/speech"],
           "status": "limited",
           "reason": "Reads stage-0 KV usage only, which may not reflect whole-pipeline load; treat results as exploratory."
+        },
+        {
+          "endpoints": ["/v1/images/generations"],
+          "status": "limited",
+          "reason": "Reads stage-0 KV usage; diffusion-based image generation may not use KV cache the same way as autoregressive models, so treat results as exploratory."
         }
       ]
     }

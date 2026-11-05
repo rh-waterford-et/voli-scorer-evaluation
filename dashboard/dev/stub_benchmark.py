@@ -63,6 +63,7 @@ settings = [run_setting(text) for text in args.run] or [(10, 1)]
 rng = random.Random(f"{args.profile}-{args.endpoint}")
 pods = ["stub-tts-a-7d9f4c", "stub-tts-b-2b6e81"]
 scorer = f"stub-{args.profile}-scorer"
+image = args.endpoint == "/v1/images/generations"
 runs_out = []
 
 for iterations, concurrency in settings:
@@ -84,6 +85,7 @@ for iterations, concurrency in settings:
         else:
             failures += 1
         embedding = args.endpoint == "/v1/embeddings"
+        image = args.endpoint == "/v1/images/generations"
         results.append(
             {
                 "iteration": index,
@@ -91,9 +93,15 @@ for iterations, concurrency in settings:
                 "error": None if ok else "stub simulated failure",
                 "pod": pod if ok else None,
                 "e2e_ms": e2e_values[index - 1],
-                "ttfa_ms": None if embedding else ttfa_values[index - 1],
+                "ttfa_ms": None if (embedding or image) else ttfa_values[index - 1],
                 "ttft_ms": None,
                 **({"embedding_dimensions": 1024} if embedding and ok else {}),
+                **({
+                    "image_content": "b64-validated" if ok else None,
+                    "image_format": "png" if ok else None,
+                    "image_bytes": 8132 if ok else None,
+                    "image_dimensions": [512, 512] if ok else None,
+                } if image else {}),
                 "profile": args.profile,
                 "scorer": scorer,
             }
@@ -109,15 +117,16 @@ for iterations, concurrency in settings:
             "valid_responses": iterations - failures,
             "failed_responses": failures,
             "missing_output_responses": 0,
+            **({"validated_responses": iterations - failures, "unverified_responses": 0} if image else {}),
             "routing": routing,
             "metrics": {
                 "e2e_ms": summary(e2e_values),
-                "ttfa_ms": summary([] if args.endpoint == "/v1/embeddings" else ttfa_values),
+                "ttfa_ms": summary([] if (embedding or image) else ttfa_values),
                 "ttft_ms": summary([]),
                 "ttfo_ms": summary([]),
                 "tpot_estimate_ms": summary([]),
                 "text_gap_ms": summary([]),
-                "audio_gap_ms": summary([] if args.endpoint == "/v1/embeddings" else [v / 8 for v in ttfa_values]),
+                "audio_gap_ms": summary([] if (embedding or image) else [v / 8 for v in ttfa_values]),
             },
             "results": results,
         }
@@ -134,7 +143,10 @@ payload = (
     else {
         "model": "stub-model",
         "endpoint": args.endpoint,
-        "modalities": ["embedding"] if args.endpoint == "/v1/embeddings" else ["audio"],
+        "modalities": {
+            "/v1/embeddings": ["embedding"],
+            "/v1/images/generations": ["image"],
+        }.get(args.endpoint, ["audio"]),
         "runs": runs_out,
     }
 )

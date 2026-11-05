@@ -11,6 +11,7 @@ when reporting issues, include it.
 ## Unreleased
 
 - Support text embeddings with non-streaming response validation and end-to-end latency.
+- Support image generation on `/v1/images/generations`: tiered content validation (PNG signature/header = verified; other formats and url-only = unverified, excluded from latency and rankings), optional requested size with Compare confounder checks, and qualified version-dependent scorer caveats for image workloads.
 
 ## 0.1.13 — 2026-10-23
 

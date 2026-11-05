@@ -66,6 +66,10 @@ export interface RequestResult {
   http_status?: number | null
   e2e_ms?: number | null
   embedding_dimensions?: number | null
+  image_content?: string | null
+  image_format?: string | null
+  image_bytes?: number | null
+  image_dimensions?: number[] | null
   ttft_ms?: number | null
   ttfo_ms?: number | null
   ttfa_ms?: number | null
@@ -90,6 +94,8 @@ export interface ScriptRun {
   valid_responses: number
   failed_responses: number
   missing_output_responses: number
+  validated_responses?: number
+  unverified_responses?: number
   routing: Record<string, number>
   metrics: Record<string, MetricSummary>
   results?: RequestResult[]
@@ -114,6 +120,7 @@ export interface RunSummary {
   requests: number
   valid: number
   failed: number
+  unverified?: number
 }
 
 export interface RunParams {
@@ -127,6 +134,7 @@ export interface RunParams {
   modalities?: string
   voice?: string | null
   audio_format?: string | null
+  image_size?: string | null
   tokenizer?: string | null
   api_key?: string | null
   session_length?: number
@@ -150,6 +158,7 @@ export interface ResultsDoc {
   model: string | null
   endpoint: string | null
   modalities: string[]
+  image_size?: string | null
   runs: ScriptRun[]
 }
 

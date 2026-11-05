@@ -118,7 +118,9 @@ function RequestsTable({ run }: { run: ScriptRun }) {
       title: 'ok = completed with all requested output',
       sort: (r) => r.status,
       render: (r) =>
-        r.status === 'ok' ? (
+        r.status === 'ok' && r.image_content && r.image_content !== 'b64-validated' ? (
+          <span className="badge warn">unverified</span>
+        ) : r.status === 'ok' ? (
           <span className="badge ok">ok</span>
         ) : (
           <span className="badge bad" title={r.error ?? undefined}>
@@ -142,6 +144,30 @@ function RequestsTable({ run }: { run: ScriptRun }) {
   }
   if (requests.some((r) => r.embedding_dimensions != null)) {
     columns.splice(3, 0, { key: 'dimensions', label: 'Dimensions', align: 'right', sort: (r) => r.embedding_dimensions ?? null, render: (r) => fmtInt(r.embedding_dimensions) })
+  }
+  if (requests.some((r) => r.image_content != null)) {
+    columns.splice(3, 0, {
+      key: 'image',
+      label: 'Image',
+      title: 'Generated image: format, size in bytes, and header dimensions when parsed. b64-validated = PNG signature and header checked; unverified = url-only or non-PNG content, excluded from latency samples.',
+      align: 'right',
+      sort: (r) => r.image_bytes ?? null,
+      render: (r) => {
+        if (!r.image_content) return '—'
+        const dims = r.image_dimensions?.length ? `, ${r.image_dimensions[0]}x${r.image_dimensions[1]}` : ''
+        return (
+          <span>
+            <span className="mono">{r.image_format ?? '?'}</span>
+            {r.image_bytes != null ? ` · ${fmtInt(r.image_bytes)} B${dims}` : ''}
+            {r.image_content !== 'b64-validated' && (
+              <span className="chip" title="Content not verified: url-only or non-PNG base64 response" style={{ marginLeft: 6 }}>
+                unverified
+              </span>
+            )}
+          </span>
+        )
+      },
+    })
   }
   return (
     <SortTable
@@ -226,7 +252,9 @@ export default function RunView() {
     const params = detail.params
     const endpoint =
       params?.endpoint ??
-      (detail.results.endpoint?.includes('/v1/embeddings')
+      (detail.results.endpoint?.includes('/v1/images/generations')
+        ? '/v1/images/generations'
+        : detail.results.endpoint?.includes('/v1/embeddings')
         ? '/v1/embeddings'
         : detail.results.endpoint?.includes('/v1/audio/speech')
         ? '/v1/audio/speech'
@@ -321,10 +349,10 @@ export default function RunView() {
       label: 'Valid',
       title: 'Responses that succeeded with all requested output',
       align: 'right',
-      sort: (r) => r.valid_responses,
+      sort: (r) => r.validated_responses ?? r.valid_responses,
       render: (r) => (
         <span>
-          <span style={{ color: 'var(--ok)' }}>{r.valid_responses}</span>
+          <span style={{ color: 'var(--ok)' }}>{r.validated_responses ?? r.valid_responses}</span>
           <span className="muted">/{r.iterations}</span>
         </span>
       ),
@@ -341,6 +369,14 @@ export default function RunView() {
     },
     { key: 'duration', label: 'Duration', title: 'Wall-clock duration of the run', align: 'right', sort: (r) => r.duration_seconds, render: (r) => fmtDuration(r.duration_seconds) },
   ]
+  if (runs.some((run) => run.unverified_responses != null)) {
+    columns.push({
+      key: 'unverified', label: 'Unverified', align: 'right',
+      title: 'Successful responses whose image content could not be verified',
+      sort: (r) => r.unverified_responses ?? 0,
+      render: (r) => r.unverified_responses ?? 0,
+    })
+  }
   if (hasAudio) {
     columns.push(
       { key: 'ttfa_p50', label: 'TTFA p50', title: 'Time to first audio event, ms — client-observed (median)', align: 'right', sort: (r) => metricOf(r, 'ttfa_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttfa_ms', 'p50')) },
@@ -369,7 +405,11 @@ export default function RunView() {
   const histoRun = runs.find((run) => run.run_id === histoRunId)
   const histoValues =
     histoRun?.results
-      ?.map((request) =>
+      ?.filter((request) =>
+        request.status === 'ok' && !request.missing_modalities?.length &&
+        (!('image_content' in request) || request.image_content === 'b64-validated'),
+      )
+      .map((request) =>
         histoMetric === 'e2e_ms' ? request.e2e_ms : (request as any)[histoMetric] ?? null,
       )
       .filter((value): value is number => value != null) ?? []

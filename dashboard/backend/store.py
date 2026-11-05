@@ -56,10 +56,15 @@ def normalize_output(document) -> Optional[dict]:
             "model": document.get("model"),
             "endpoint": document.get("endpoint"),
             "modalities": document.get("modalities", []),
+            "image_size": document.get("image_size"),
             "runs": document["runs"],
         }
     if "profile" in document and "metrics" in document:
-        return {"model": None, "endpoint": None, "modalities": [], "runs": [document]}
+        return {
+            "model": document.get("model"), "endpoint": document.get("endpoint"),
+            "modalities": document.get("modalities", []), "image_size": document.get("image_size"),
+            "runs": [document],
+        }
     return None
 
 
@@ -71,8 +76,9 @@ def summarize_output(normalized: Optional[dict]) -> Optional[dict]:
         "profiles": sorted({str(run.get("profile", "?")) for run in runs}),
         "run_count": len(runs),
         "requests": sum(int(run.get("iterations") or 0) for run in runs),
-        "valid": sum(int(run.get("valid_responses") or 0) for run in runs),
+        "valid": sum(int(run.get("validated_responses", run.get("valid_responses")) or 0) for run in runs),
         "failed": sum(int(run.get("failed_responses") or 0) for run in runs),
+        "unverified": sum(int(run.get("unverified_responses") or 0) for run in runs),
     }
 
 
@@ -168,7 +174,7 @@ class RunStore:
     def load_results(self, meta: dict) -> Optional[dict]:
         """Merge every completed attempt's result file into one document."""
         runs = []
-        model = endpoint = None
+        model = endpoint = image_size = None
         modalities: list = []
         for attempt in meta.get("profiles", []):
             relative = attempt.get("result_file")
@@ -186,6 +192,7 @@ class RunStore:
                 continue
             model = model or normalized["model"]
             endpoint = endpoint or normalized["endpoint"]
+            image_size = image_size or normalized.get("image_size")
             modalities = modalities or normalized["modalities"] or []
             runs.extend(normalized["runs"])
         if not runs:
@@ -196,14 +203,16 @@ class RunStore:
         if endpoint is None:
             endpoint = params.get("endpoint")
         if not modalities:
-            modalities = {"/v1/audio/speech": ["audio"], "/v1/embeddings": ["embedding"]}.get(
+            modalities = {"/v1/audio/speech": ["audio"], "/v1/embeddings": ["embedding"], "/v1/images/generations": ["image"]}.get(
                 params.get("endpoint"), []
             )
-        return {"model": model, "endpoint": endpoint, "modalities": modalities, "runs": runs}
+        image_size = image_size or params.get("image_size")
+        return {"model": model, "endpoint": endpoint, "modalities": modalities,
+                "image_size": image_size, "runs": runs}
 
     def ensure_summary(self, meta: dict) -> Optional[dict]:
         summary = meta.get("summary")
-        if summary is None and meta.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+        if (summary is None or "unverified" not in summary) and meta.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
             summary = summarize_output(self.load_results(meta))
             if summary is not None:
                 meta["summary"] = summary

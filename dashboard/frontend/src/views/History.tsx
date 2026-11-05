@@ -26,6 +26,7 @@ interface ChildProfile {
   loads: string[]
   valid: number
   failed: number
+  unverified: number
 }
 
 function childrenFromDetail(detail: RunDetail): ChildProfile[] {
@@ -34,13 +35,14 @@ function childrenFromDetail(detail: RunDetail): ChildProfile[] {
   for (const run of detail.results?.runs ?? []) {
     let child = byName.get(run.profile)
     if (!child) {
-      child = { name: run.profile, scorer: run.scorer, loads: [], valid: 0, failed: 0 }
+      child = { name: run.profile, scorer: run.scorer, loads: [], valid: 0, failed: 0, unverified: 0 }
       byName.set(run.profile, child)
       order.push(run.profile)
     }
     child.loads.push(loadLabel(run))
-    child.valid += run.valid_responses
+    child.valid += run.validated_responses ?? run.valid_responses
     child.failed += run.failed_responses
+    child.unverified += run.unverified_responses ?? 0
   }
   return order.map((name) => byName.get(name)!)
 }
@@ -86,6 +88,7 @@ function SuiteChildren({
             <span className="muted">loads {child.loads.join(', ')}</span>
             <span className="muted">
               valid {fmtInt(child.valid)} / failed {fmtInt(child.failed)}
+              {child.unverified > 0 && ` / unverified ${fmtInt(child.unverified)}`}
             </span>
           </label>
         )
@@ -314,6 +317,7 @@ export default function History() {
           <span style={{ color: row.summary?.failed ? 'var(--bad)' : 'inherit' }}>
             {fmtInt(row.summary?.failed)}
           </span>
+          {!!row.summary?.unverified && <span className="muted"> · {row.summary.unverified} unverified</span>}
         </span>
       ),
     },
