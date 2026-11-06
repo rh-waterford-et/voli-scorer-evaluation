@@ -310,6 +310,11 @@ export default function NewRun() {
               <option value="/v1/images/generations">/v1/images/generations (image generation)</option>
               <option value="/v1/images/edits">/v1/images/edits (image editing)</option>
             </select>
+            {(endpoint === '/v1/images/generations' || endpoint === '/v1/images/edits') && (
+              <p className="muted" style={{ margin: '6px 0 0' }}>
+                Image runs can take several minutes, especially while the model warms up.
+              </p>
+            )}
           </div>
           <div>
             <label>
