@@ -13,7 +13,7 @@ and runs the benchmark as a subprocess.
 
 | Area | Details |
 |---|---|
-| New run | Select profiles (built-in map or live cluster ConfigMap), load settings (`--run NxC`), prompts, and common flags. "Show command" previews the command lines; image edits use a placeholder for the uploaded file. Nothing is pre-selected; `default` (no `EPP-Profile` header → cluster's default profile) is an explicit opt-in listed last. |
+| New run | Select profiles (built-in map or live cluster ConfigMap), load settings (`--run NxC`), prompts, and common flags. "Show command" previews the command lines; uploads use a placeholder for the file. Nothing is pre-selected; `default` (no `EPP-Profile` header → cluster's default profile) is an explicit opt-in listed last. |
 | Live progress | Per-profile status, the script's progress lines, and the full stdout/stderr log stream (SSE). Cancel mid-run. |
 | Results | Sortable table per profile × load (TTFA/TTFT/TPOT/E2E, mean/p50/p99), expandable to full metrics, pod routing distribution, and per-request details including raw EPP scores, weighted contributions, and picker selection. |
 | Charts | p50/p99 comparison bars across profile-runs; latency histograms per run. |
@@ -135,17 +135,10 @@ Then open <http://localhost:8765>.
   with it. Reusing the same input can warm server caches; edit latency includes
   the upload and response processing. Compare blocks rankings for different
   requested image sizes or edit inputs and warns when these are unknown.
-- `/v1/audio/transcriptions` (batch mode) uploads one audio file with the run
-  and reports end-to-end latency for responses with a nonempty transcript.
-  Empty transcripts are valid (silence) but counted separately and excluded
-  from latency and rankings, so a failed recognition cannot look fast. JSON
-  and plain-text responses are both accepted. The prompt is an optional
-  recognition hint, sent only when explicitly provided. Audio inputs get a
-  best-effort header check (format label, WAV duration when parseable) and
-  are never rejected for an unrecognized format. Compare blocks rankings for
-  different input audio or languages and warns on set-vs-unset language.
-  Streaming transcription is a planned follow-up gated on a captured real
-  response; streaming microphone input is a different API and out of scope.
+- `/v1/audio/transcriptions` uploads one audio file and reports batch
+  end-to-end latency. Empty transcripts are counted separately and excluded
+  from latency statistics and rankings. Language and prompt hints are optional;
+  Compare checks the input audio, language and prompt.
 
 ### Frontend dev mode
 
@@ -209,7 +202,7 @@ subprocess is not tracked); avoid restarting the backend mid-run.
 | `GET /api/profiles` | Script profile map (local synced file if present, else tracked default). |
 | `GET /api/profiles/check?endpoint=…` | Per-profile scorer operability: curated caveats + live prerequisite checks (read-only). |
 | `GET /api/profiles/cluster?namespace=…` | Live EPP profiles from the ConfigMap (read-only). |
-| `POST /api/runs` | Start a run with JSON `{name?, params}`. Image edits use multipart form data with a `params` JSON field and an `image` file. |
+| `POST /api/runs` | Start a run with JSON `{name?, params}`. Image edits and transcriptions use multipart form data with that JSON in `params` and the upload in `file`. |
 | `POST /api/runs/preview` | Show the command lines without running. |
 | `GET /api/runs` | History (dashboard runs + `reports/*.json`). |
 | `GET /api/runs/{id}` | Run detail with merged results. |
