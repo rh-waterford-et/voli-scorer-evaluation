@@ -86,7 +86,9 @@ export default function Compare() {
     const first = details[0]
     const endpoint =
       first.params?.endpoint ??
-      (first.results?.endpoint?.includes('/v1/images/edits')
+      (first.results?.endpoint?.includes('/v1/audio/transcriptions')
+        ? '/v1/audio/transcriptions'
+        : first.results?.endpoint?.includes('/v1/images/edits')
         ? '/v1/images/edits'
         : first.results?.endpoint?.includes('/v1/images/generations')
         ? '/v1/images/generations'
@@ -182,16 +184,41 @@ export default function Compare() {
     if (!isEdit) return undefined
     return (
       detail.results?.edit_image?.sha256 ??
-      detail.params?.image_info?.sha256 ??
+      detail.params?.input_info?.sha256 ??
       null
     )
   }
   const editImageHashes = details.map(editImageHashOf)
+  // Transcription runs: the input audio dominates request cost the same way.
+  const audioHashOf = (detail: RunDetail): string | null | undefined => {
+    const isTranscription =
+      detail.params?.endpoint === '/v1/audio/transcriptions' ||
+      (detail.results?.endpoint ?? '').includes('/v1/audio/transcriptions')
+    if (!isTranscription) return undefined
+    return (
+      detail.results?.transcribe_audio?.sha256 ??
+      detail.params?.input_info?.sha256 ??
+      null
+    )
+  }
+  const audioHashes = details.map(audioHashOf)
+  // Language hint: differing known languages block; one-set-one-unset warns
+  // (a pinned language and the model's auto-detection may behave alike).
+  const languageOf = (detail: RunDetail): string | null | undefined => {
+    const isTranscription =
+      detail.params?.endpoint === '/v1/audio/transcriptions' ||
+      (detail.results?.endpoint ?? '').includes('/v1/audio/transcriptions')
+    if (!isTranscription) return undefined
+    return (detail.params?.language ?? detail.results?.language ?? '').trim() || null
+  }
+  const languages = details.map(languageOf)
   const modalitiesOf = (detail: RunDetail): string =>
     (detail.results?.modalities ?? []).join(',') ||
     (detail.params?.endpoint === '/v1/images/edits' ||
       detail.params?.endpoint === '/v1/images/generations'
       ? 'image'
+      : detail.params?.endpoint === '/v1/audio/transcriptions'
+      ? 'transcription'
       : detail.params?.endpoint === '/v1/embeddings'
       ? 'embedding'
       : detail.params?.modalities) ||
@@ -245,6 +272,33 @@ export default function Compare() {
     comparisonWarnings.push(
       `${missingEditHashes} of the selected image-edit run${missingEditHashes === 1 ? '' : 's'} ` +
         'have no recorded input-image hash; the inputs may differ between runs.',
+    )
+  }
+
+  // Transcription runs: same policy for the input audio, plus the language
+  // hint (differing known languages block; one-set-one-unset warns).
+  const anyTranscriptionRun = audioHashes.some((value) => value !== undefined)
+  const knownAudioHashes = Array.from(new Set(audioHashes.filter((value): value is string => value != null)))
+  const missingAudioHashes = audioHashes.filter((value) => value === null).length
+  if (anyTranscriptionRun && knownAudioHashes.length > 1) {
+    mismatched.push('input audio (different transcription inputs)')
+  }
+  if (anyTranscriptionRun && knownAudioHashes.length <= 1 && missingAudioHashes > 0) {
+    comparisonWarnings.push(
+      `${missingAudioHashes} of the selected transcription run${missingAudioHashes === 1 ? '' : 's'} ` +
+        'have no recorded input-audio hash; the inputs may differ between runs.',
+    )
+  }
+  const knownLanguages = Array.from(new Set(languages.filter((value): value is string => value != null)))
+  const unsetLanguages = languages.filter((value) => value === null).length
+  if (anyTranscriptionRun && knownLanguages.length > 1) {
+    mismatched.push(`languages (${knownLanguages.join(' vs ')})`)
+  }
+  if (anyTranscriptionRun && knownLanguages.length === 1 && unsetLanguages > 0) {
+    comparisonWarnings.push(
+      `${unsetLanguages} of the selected transcription run${unsetLanguages === 1 ? '' : 's'} ` +
+        `use the model-default language while other${unsetLanguages === 1 ? '' : 's'} set ${knownLanguages[0]}; ` +
+        'recognition behavior may differ.',
     )
   }
 

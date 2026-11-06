@@ -104,8 +104,8 @@ uv pip install --python dashboard/.venv/bin/python -r dashboard/backend/requirem
 ```
 
 For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
-`transformers` into the same venv (TTS, embeddings and image runs
-need nothing extra):
+`transformers` into the same venv (TTS, embeddings, image and transcription
+runs need nothing extra):
 
 ```bash
 uv pip install --python dashboard/.venv/bin/python transformers
@@ -135,6 +135,17 @@ Then open <http://localhost:8765>.
   with it. Reusing the same input can warm server caches; edit latency includes
   the upload and response processing. Compare blocks rankings for different
   requested image sizes or edit inputs and warns when these are unknown.
+- `/v1/audio/transcriptions` (batch mode) uploads one audio file with the run
+  and reports end-to-end latency for responses with a nonempty transcript.
+  Empty transcripts are valid (silence) but counted separately and excluded
+  from latency and rankings, so a failed recognition cannot look fast. JSON
+  and plain-text responses are both accepted. The prompt is an optional
+  recognition hint, sent only when explicitly provided. Audio inputs get a
+  best-effort header check (format label, WAV duration when parseable) and
+  are never rejected for an unrecognized format. Compare blocks rankings for
+  different input audio or languages and warns on set-vs-unset language.
+  Streaming transcription is a planned follow-up gated on a captured real
+  response; streaming microphone input is a different API and out of scope.
 
 ### Frontend dev mode
 

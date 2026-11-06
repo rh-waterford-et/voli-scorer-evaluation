@@ -120,6 +120,8 @@ function RequestsTable({ run }: { run: ScriptRun }) {
       render: (r) =>
         r.status === 'ok' && r.image_content && r.image_content !== 'b64-validated' ? (
           <span className="badge warn">unverified</span>
+        ) : r.status === 'ok' && r.transcript_empty ? (
+          <span className="badge warn" title="Valid response with an empty transcript — excluded from latency samples">empty</span>
         ) : r.status === 'ok' ? (
           <span className="badge ok">ok</span>
         ) : (
@@ -169,6 +171,30 @@ function RequestsTable({ run }: { run: ScriptRun }) {
       },
     })
   }
+  if (requests.some((r) => r.transcript_chars != null)) {
+    columns.splice(3, 0, {
+      key: 'transcript',
+      label: 'Transcript',
+      title: 'Transcribed text: character count and response format. Empty transcripts are valid responses (e.g. silence) but excluded from latency samples.',
+      align: 'right',
+      sort: (r) => r.transcript_chars ?? null,
+      render: (r) => {
+        if (r.transcript_chars == null) return '—'
+        return (
+          <span>
+            {fmtInt(r.transcript_chars)} chars
+            {r.transcript_empty ? (
+              <span className="chip" title="Empty transcript — excluded from latency samples" style={{ marginLeft: 6 }}>
+                empty
+              </span>
+            ) : (
+              <span className="muted" style={{ marginLeft: 6 }}>{r.transcript_format}</span>
+            )}
+          </span>
+        )
+      },
+    })
+  }
   return (
     <SortTable
       columns={columns}
@@ -178,6 +204,9 @@ function RequestsTable({ run }: { run: ScriptRun }) {
       expand={(r) => (
         <div>
           {r.error && <div className="error-text">Error: {r.error}</div>}
+          {r.transcript_chars != null && !r.transcript_empty && r.text && (
+            <div className="muted">Transcript: {r.text}</div>
+          )}
           {r.missing_modalities?.length ? (
             <div className="warn-text">Missing modalities: {r.missing_modalities.join(', ')}</div>
           ) : null}
@@ -252,7 +281,9 @@ export default function RunView() {
     const params = detail.params
     const endpoint =
       params?.endpoint ??
-      (detail.results.endpoint?.includes('/v1/images/edits')
+      (detail.results.endpoint?.includes('/v1/audio/transcriptions')
+        ? '/v1/audio/transcriptions'
+        : detail.results.endpoint?.includes('/v1/images/edits')
         ? '/v1/images/edits'
         : detail.results.endpoint?.includes('/v1/images/generations')
         ? '/v1/images/generations'
@@ -409,7 +440,8 @@ export default function RunView() {
     histoRun?.results
       ?.filter((request) =>
         request.status === 'ok' && !request.missing_modalities?.length &&
-        (!('image_content' in request) || request.image_content === 'b64-validated'),
+        (!('image_content' in request) || request.image_content === 'b64-validated') &&
+        (!('transcript_chars' in request) || !request.transcript_empty),
       )
       .map((request) =>
         histoMetric === 'e2e_ms' ? request.e2e_ms : (request as any)[histoMetric] ?? null,
@@ -476,6 +508,21 @@ export default function RunView() {
               {' '}· input image <code>{detail.results.edit_image.name ?? '—'}</code>
               {' '}({detail.results.edit_image.bytes ?? '—'} B, sha256{' '}
               <code>{(detail.results.edit_image.sha256 ?? '').slice(0, 12) || '—'}</code>)
+            </>
+          )}
+          {detail.results?.transcribe_audio && (
+            <>
+              {' '}· input audio <code>{detail.results.transcribe_audio.name ?? '—'}</code>
+              {' '}({detail.results.transcribe_audio.bytes ?? '—'} B
+              {detail.results.transcribe_audio.duration_seconds != null
+                ? `, ${detail.results.transcribe_audio.duration_seconds} s`
+                : ''}
+              , sha256 <code>{(detail.results.transcribe_audio.sha256 ?? '').slice(0, 12) || '—'}</code>)
+            </>
+          )}
+          {detail.results?.language && (
+            <>
+              {' '}· language <code>{detail.results.language}</code>
             </>
           )}
         </p>

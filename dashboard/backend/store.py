@@ -6,7 +6,7 @@ A dashboard "run" is a directory:
         meta.json                    run metadata (status, params, attempts)
         log.txt                      full merged stdout/stderr of every attempt
         prompts.txt                  optional multi-prompt input (if provided)
-        input/<filename>             optional uploaded edit image (if provided)
+        input/<filename>             optional uploaded input file (image or audio)
         profiles/<safe-name>.json    stream_metrics.py --output-json result
 
 Run ids from the repository's reports/ directory are exposed read-only with
@@ -60,6 +60,8 @@ def normalize_output(document) -> Optional[dict]:
             "modalities": document.get("modalities", []),
             "image_size": document.get("image_size"),
             "edit_image": document.get("edit_image"),
+            "transcribe_audio": document.get("transcribe_audio"),
+            "language": document.get("language"),
             "runs": document["runs"],
         }
     if "profile" in document and "metrics" in document:
@@ -67,6 +69,8 @@ def normalize_output(document) -> Optional[dict]:
             "model": document.get("model"), "endpoint": document.get("endpoint"),
             "modalities": document.get("modalities", []), "image_size": document.get("image_size"),
             "edit_image": document.get("edit_image"),
+            "transcribe_audio": document.get("transcribe_audio"),
+            "language": document.get("language"),
             "runs": [document],
         }
     return None
@@ -83,6 +87,7 @@ def summarize_output(normalized: Optional[dict]) -> Optional[dict]:
         "valid": sum(int(run.get("validated_responses", run.get("valid_responses")) or 0) for run in runs),
         "failed": sum(int(run.get("failed_responses") or 0) for run in runs),
         "unverified": sum(int(run.get("unverified_responses") or 0) for run in runs),
+        "empty_transcripts": sum(int(run.get("empty_transcripts") or 0) for run in runs),
     }
 
 
@@ -109,16 +114,16 @@ class RunStore:
     def prompts_path(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "prompts.txt"
 
-    def save_run_image(self, run_id: str, data: bytes, filename: str) -> tuple[Path, dict]:
-        """Store an uploaded edit image inside the run directory.
+    def save_run_input(self, run_id: str, data: bytes, filename: str) -> tuple[Path, dict]:
+        """Store an uploaded run input file (image or audio) inside the run directory.
 
         Living with the run means run deletion removes it. The metadata dict
         (name, bytes, sha256) is kept in run params so comparisons can detect
         different inputs even after the file is gone.
         """
-        safe_name = (Path(filename or "input-image").name or "input-image").replace("\x00", "_")
+        safe_name = (Path(filename or "input-file").name or "input-file").replace("\x00", "_")
         if safe_name in (".", "..") or len(safe_name.encode("utf-8")) > 255:
-            safe_name = "input-image"
+            safe_name = "input-file"
         path = self.run_dir(run_id) / "input" / safe_name
         with self._lock:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,7 +204,7 @@ class RunStore:
     def load_results(self, meta: dict) -> Optional[dict]:
         """Merge every completed attempt's result file into one document."""
         runs = []
-        model = endpoint = image_size = edit_image = None
+        model = endpoint = image_size = edit_image = transcribe_audio = language = None
         modalities: list = []
         for attempt in meta.get("profiles", []):
             relative = attempt.get("result_file")
@@ -219,6 +224,8 @@ class RunStore:
             endpoint = endpoint or normalized["endpoint"]
             image_size = image_size or normalized.get("image_size")
             edit_image = edit_image or normalized.get("edit_image")
+            transcribe_audio = transcribe_audio or normalized.get("transcribe_audio")
+            language = language or normalized.get("language")
             modalities = modalities or normalized["modalities"] or []
             runs.extend(normalized["runs"])
         if not runs:
@@ -234,11 +241,15 @@ class RunStore:
                 "/v1/embeddings": ["embedding"],
                 "/v1/images/generations": ["image"],
                 "/v1/images/edits": ["image"],
+                "/v1/audio/transcriptions": ["transcription"],
             }.get(params.get("endpoint"), [])
         image_size = image_size or params.get("image_size")
-        edit_image = edit_image or params.get("image_info")
+        edit_image = edit_image or params.get("input_info")
+        transcribe_audio = transcribe_audio or params.get("input_info")
+        language = language or params.get("language")
         return {"model": model, "endpoint": endpoint, "modalities": modalities,
-                "image_size": image_size, "edit_image": edit_image, "runs": runs}
+                "image_size": image_size, "edit_image": edit_image,
+                "transcribe_audio": transcribe_audio, "language": language, "runs": runs}
 
     def ensure_summary(self, meta: dict) -> Optional[dict]:
         summary = meta.get("summary")

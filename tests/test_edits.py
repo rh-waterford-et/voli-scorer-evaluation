@@ -201,14 +201,14 @@ class EditTests(unittest.TestCase):
 
     def test_dashboard_params_and_store_roundtrip(self):
         params = RunParams(endpoint="/v1/images/edits", model="flux-edit", profiles=["default"],
-                           no_backend_lookup=True, image="/tmp/some-input.png", image_size="1024x1024")
+                           no_backend_lookup=True, input_file="/tmp/some-input.png", image_size="1024x1024")
         args = params.common_argv(Path("out.json"), None)
         self.assertIn("--image", args)
         self.assertIn("/tmp/some-input.png", args)
         self.assertIn("--size", args)
         # The image path is silently ignored outside edit runs.
         generation = RunParams(endpoint="/v1/images/generations", model="flux", profiles=["default"],
-                               image="/tmp/some-input.png")
+                               input_file="/tmp/some-input.png")
         self.assertNotIn("--image", generation.common_argv(Path("out.json"), None))
         # Combined results keep the edit-image metadata for Compare.
         normalized = normalize_output({
@@ -227,7 +227,7 @@ class EditTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             store = RunStore(Path(temp))
             png = make_png(2, 2)
-            path, info = store.save_run_image("run-x", png, 'weird "name".png')
+            path, info = store.save_run_input("run-x", png, 'weird "name".png')
             self.assertEqual(path.parent, store.run_dir("run-x") / "input")
             self.assertTrue(path.suffix == ".png")
             self.assertEqual(path.name, 'weird "name".png')
@@ -245,7 +245,7 @@ class EditTests(unittest.TestCase):
             params = RunParams(endpoint="/v1/images/edits", profiles=["default"])
             argv = manager.preview(params)["profiles"][0]["argv"]
             self.assertEqual(argv[argv.index("--image") + 1], "YOUR_IMAGE_PATH")
-            self.assertIsNone(params.image)
+            self.assertIsNone(params.input_file)
 
     def test_stub_reports_actual_input_image(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -319,7 +319,7 @@ class DashboardCreateTests(unittest.IsolatedAsyncioTestCase):
         boundary = "test-boundary"
         payload = json.dumps({"params": {"endpoint": "/v1/images/edits", "profiles": ["default"]}})
         prefix = (f'--{boundary}\r\nContent-Disposition: form-data; name="params"\r\n\r\n{payload}\r\n'
-                  f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="original.png"\r\n'
+                  f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="original.png"\r\n'
                   'Content-Type: image/png\r\n\r\n').encode()
         suffix = f"\r\n--{boundary}--\r\n".encode()
         with tempfile.TemporaryDirectory() as temp:
@@ -335,9 +335,9 @@ class DashboardCreateTests(unittest.IsolatedAsyncioTestCase):
                                                     f"multipart/form-data; boundary={boundary}")
                 self.assertEqual(status, 200)
                 self.assertEqual(result["id"], "test-run")
-                info = metrics.load_edit_image(manager.params.image)
+                info = metrics.load_edit_image(manager.params.input_file)
                 self.assertEqual(info["name"], "original.png")
-                self.assertEqual(info["sha256"], manager.params.image_info["sha256"])
+                self.assertEqual(info["sha256"], manager.params.input_info["sha256"])
 
 
 if __name__ == "__main__":

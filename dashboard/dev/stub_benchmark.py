@@ -38,6 +38,8 @@ parser.add_argument("--output-json", type=Path, required=True)
 parser.add_argument("--endpoint", default="/v1/audio/speech")
 parser.add_argument("--size", default=None)
 parser.add_argument("--image", default=None)
+parser.add_argument("--audio", default=None)
+parser.add_argument("--language", default=None)
 args, _unknown = parser.parse_known_args()
 
 
@@ -68,6 +70,7 @@ pods = ["stub-tts-a-7d9f4c", "stub-tts-b-2b6e81"]
 scorer = f"stub-{args.profile}-scorer"
 image = args.endpoint in ("/v1/images/generations", "/v1/images/edits")
 edit = args.endpoint == "/v1/images/edits"
+transcription = args.endpoint == "/v1/audio/transcriptions"
 runs_out = []
 
 for iterations, concurrency in settings:
@@ -90,6 +93,7 @@ for iterations, concurrency in settings:
             failures += 1
         embedding = args.endpoint == "/v1/embeddings"
         image = args.endpoint in ("/v1/images/generations", "/v1/images/edits")
+        plain = embedding or image or transcription
         results.append(
             {
                 "iteration": index,
@@ -97,7 +101,7 @@ for iterations, concurrency in settings:
                 "error": None if ok else "stub simulated failure",
                 "pod": pod if ok else None,
                 "e2e_ms": e2e_values[index - 1],
-                "ttfa_ms": None if (embedding or image) else ttfa_values[index - 1],
+                "ttfa_ms": None if plain else ttfa_values[index - 1],
                 "ttft_ms": None,
                 **({"embedding_dimensions": 1024} if embedding and ok else {}),
                 **({
@@ -106,6 +110,12 @@ for iterations, concurrency in settings:
                     "image_bytes": 8132 if ok else None,
                     "image_dimensions": [512, 512] if ok else None,
                 } if image else {}),
+                **({
+                    "transcript_chars": 42 if ok else None,
+                    "transcript_empty": False if ok else None,
+                    "transcript_format": "json" if ok else None,
+                    "text": "stub transcript text" if ok else "",
+                } if transcription else {}),
                 "profile": args.profile,
                 "scorer": scorer,
             }
@@ -122,15 +132,16 @@ for iterations, concurrency in settings:
             "failed_responses": failures,
             "missing_output_responses": 0,
             **({"validated_responses": iterations - failures, "unverified_responses": 0} if image else {}),
+            **({"empty_transcripts": 0} if transcription else {}),
             "routing": routing,
             "metrics": {
                 "e2e_ms": summary(e2e_values),
-                "ttfa_ms": summary([] if (embedding or image) else ttfa_values),
+                "ttfa_ms": summary([] if plain else ttfa_values),
                 "ttft_ms": summary([]),
                 "ttfo_ms": summary([]),
                 "tpot_estimate_ms": summary([]),
                 "text_gap_ms": summary([]),
-                "audio_gap_ms": summary([] if (embedding or image) else [v / 8 for v in ttfa_values]),
+                "audio_gap_ms": summary([] if plain else [v / 8 for v in ttfa_values]),
             },
             "results": results,
         }
@@ -151,6 +162,7 @@ payload = (
             "/v1/embeddings": ["embedding"],
             "/v1/images/generations": ["image"],
             "/v1/images/edits": ["image"],
+            "/v1/audio/transcriptions": ["transcription"],
         }.get(args.endpoint, ["audio"]),
         "runs": runs_out,
     }
@@ -165,6 +177,15 @@ if edit:
         "bytes": len(image_data),
         "sha256": hashlib.sha256(image_data).hexdigest(),
     }
+if transcription:
+    audio_path = Path(args.audio)
+    audio_data = audio_path.read_bytes()
+    payload["transcribe_audio"] = {
+        "name": audio_path.name,
+        "bytes": len(audio_data),
+        "sha256": hashlib.sha256(audio_data).hexdigest(),
+    }
+    payload["language"] = args.language
 args.output_json.parent.mkdir(parents=True, exist_ok=True)
 args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
 print(f"\nSaved detailed JSON: {args.output_json}", flush=True)

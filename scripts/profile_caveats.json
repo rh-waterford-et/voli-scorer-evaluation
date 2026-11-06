@@ -33,6 +33,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "unknown",
           "reason": "Prompt-text estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified; it also excludes the reference-image input and output-generation cost (issue #3720), so the estimate covers only the text prompt and predictor behavior is unverified."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "unknown",
+          "reason": "The OpenAI parser does not claim /v1/audio/transcriptions; requests fall to the passthrough parser, so the predictor receives no workload data (upstream issue #3963, opened 2026-11-04, open). The fix (PR #3964) is open and unmerged. Deployed behavior is unverified — check the router version before trusting latency-scorer results for transcriptions."
         }
       ]
     },
@@ -52,6 +57,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "unknown",
           "reason": "Prompt-text estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified, and the reference-image input is excluded from the estimate (issue #3720); cache-aware routing quality for edits is unverified."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "unknown",
+          "reason": "Transcription requests fall to the passthrough parser (issue #3963), so no prefix data is produced regardless of audio content; the fix (PR #3964) is open and unmerged. Cache-aware routing quality for transcriptions is unverified on any deployment."
         }
       ]
     },
@@ -71,6 +81,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "unknown",
           "reason": "Input-length estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified; it excludes the reference-image input and output-generation cost (issue #3720), so length-based decisions may not reflect real request cost."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "unknown",
+          "reason": "Transcription requests currently carry zero estimated input tokens regardless of audio length — a 1-hour file and a 5-second clip weigh the same (passthrough parser, issue #3963; fix PR #3964 open and unmerged) — so length-based decisions are meaningless until the deployed router is verified."
         }
       ]
     },
@@ -90,6 +105,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "unknown",
           "reason": "Prompt-text estimation for image edits merged upstream (PR #3721) but is version-dependent and unverified, and it excludes the reference-image input and output-generation cost (issue #3720), so token-load comparisons may not reflect real load."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "unknown",
+          "reason": "Transcription requests count as zero input tokens regardless of audio length under the passthrough parser (issue #3963), so in-flight and token-load comparisons cannot see the real load; the duration-based fix (PR #3964) is open and unmerged. Verify the deployed router version before trusting token-load results for transcriptions."
         }
       ]
     },
@@ -109,6 +129,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "limited",
           "reason": "Prefix data for image edits is unverified on current deployments. If prefix data is missing, requests are treated as cold and this exercises LRU spreading only."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "limited",
+          "reason": "Prefix data for transcriptions is unverified on current deployments (passthrough parser, issue #3963). Until verified, requests are effectively treated as cold and this exercises LRU spreading only."
         }
       ]
     },
@@ -128,6 +153,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "unknown",
           "reason": "Edits supply an input image, but in the local (older) router checkout the parser skips uploaded file parts, so the scorer may never see the reference image; verify the deployed router version before concluding whether this scorer has a usable signal for edits."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "unknown",
+          "reason": "Transcriptions supply input audio, but the endpoint falls to the passthrough parser, which discards uploaded file parts entirely (issue #3963; the fix PR #3964 would capture the file as UploadedMedia but is open and unmerged). Whether the scorer can see the audio on a deployed router is unverified."
         }
       ]
     },
@@ -156,6 +186,11 @@
           "endpoints": ["/v1/images/edits"],
           "status": "limited",
           "reason": "Reads stage-0 KV usage; diffusion-based image editing may not use KV cache the same way as autoregressive models, so treat results as exploratory."
+        },
+        {
+          "endpoints": ["/v1/audio/transcriptions"],
+          "status": "limited",
+          "reason": "Reads stage-0 KV usage; ASR encoder paths may not use KV cache the way autoregressive models do, so treat results as exploratory."
         }
       ]
     }

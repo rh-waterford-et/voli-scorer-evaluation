@@ -286,9 +286,11 @@ class RunManager:
         return run_id, attempts
 
     def preview(self, params) -> dict:
-        if params.endpoint == "/v1/images/edits" and not params.image:
+        if params.endpoint == "/v1/images/edits" and not params.input_file:
             # The upload is stored only when the run is started.
-            params = params.model_copy(update={"image": "YOUR_IMAGE_PATH"})
+            params = params.model_copy(update={"input_file": "YOUR_IMAGE_PATH"})
+        if params.endpoint == "/v1/audio/transcriptions" and not params.input_file:
+            params = params.model_copy(update={"input_file": "YOUR_AUDIO_PATH"})
         run_id, attempts = self.plan(params)
         return {
             "run_id": run_id,

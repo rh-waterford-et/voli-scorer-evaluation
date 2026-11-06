@@ -58,7 +58,7 @@ def load_profile_scorers():
 PROFILE_SCORERS = load_profile_scorers()
 
 
-ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits")
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits", "/v1/audio/transcriptions")
 
 # Image endpoints share the response shape (b64_json/url data) and the
 # tiered content-verification policy.
@@ -66,6 +66,14 @@ IMAGE_ENDPOINTS = ("/v1/images/generations", "/v1/images/edits")
 
 # Content-Type for the file part of an image-edit multipart request.
 IMAGE_CONTENT_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
+
+# Content-Type for the file part of a transcription multipart request.
+# Unrecognized formats are sent as application/octet-stream; the server
+# decides whether it can decode them.
+AUDIO_CONTENT_TYPES = {
+    "wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac",
+    "ogg": "audio/ogg", "webm": "audio/webm",
+}
 
 
 def endpoint_url(url, endpoint="/v1/chat/completions"):
@@ -181,6 +189,81 @@ def public_edit_image(edit_image):
     return {key: value for key, value in edit_image.items() if key != "data"}
 
 
+def sniff_audio_format(data):
+    """Best-effort audio format name, or None if unrecognized.
+
+    Recognition is informational only: unrecognized files are still sent
+    (the server decides whether it can decode them).
+    """
+    if data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "wav"
+    if data[:4] == b"fLaC":
+        return "flac"
+    if data[:4] == b"OggS":
+        return "ogg"
+    if data[:3] == b"ID3":
+        return "mp3"
+    if len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0:
+        return "mp3"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "webm"
+    return None
+
+
+def wav_duration(data):
+    """Duration in seconds from a WAV header's fmt/data chunks, or None.
+
+    Uses the fmt chunk's average byte rate, so compressed WAV variants work
+    too; any parse doubt returns None. Header check only.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return None
+    byte_rate = None
+    data_size = None
+    position = 12
+    while position + 8 <= len(data):
+        chunk_id = data[position:position + 4]
+        chunk_size = int.from_bytes(data[position + 4:position + 8], "little")
+        body = data[position + 8:position + 8 + chunk_size]
+        if chunk_id == b"fmt " and len(body) >= 8:
+            byte_rate = int.from_bytes(body[4:8], "little")
+        elif chunk_id == b"data":
+            data_size = len(body)
+        position += 8 + chunk_size + (chunk_size & 1)
+    if byte_rate and data_size:
+        return round(data_size / byte_rate, 3)
+    return None
+
+
+def inspect_transcribe_audio(data, name):
+    """Describe a transcription input audio without decoding it.
+
+    Best-effort and lenient: the hash and byte size are always recorded;
+    the format label and WAV duration are informational (header checks
+    only) and may be None. Unrecognized formats are NOT rejected — the
+    server decides whether it can decode the file.
+    """
+    audio_format = sniff_audio_format(data)
+    return {
+        "name": name,
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "format": audio_format,
+        "duration_seconds": wav_duration(data) if audio_format == "wav" else None,
+    }
+
+
+def load_transcribe_audio(path):
+    """Read the /v1/audio/transcriptions input audio and describe it."""
+    try:
+        data = Path(path).read_bytes()
+    except OSError as error:
+        raise SystemExit(f"cannot read --audio: {error}")
+    audio = inspect_transcribe_audio(data, Path(path).name)
+    audio["data"] = data
+    return audio
+
+
 def percentile(values, quantile):
     if not values:
         return None
@@ -246,28 +329,46 @@ def payload_for(args, prompt, modalities):
     return payload
 
 
-def multipart_body(args, prompt, edit_image):
-    """Build a multipart/form-data body for /v1/images/edits.
+def multipart_body(args, prompt, modalities):
+    """Build a multipart/form-data body for file-input endpoints.
 
-    One "image" file part plus the text fields; field names match the
-    vLLM-Omni Image API examples. The boundary is unique per request.
+    Image edits send one "image" part; transcriptions send one "file" part
+    (the OpenAI field name). Field names match the vLLM-Omni / OpenAI API
+    examples. The boundary is unique per request.
     """
     boundary = uuid.uuid4().hex
-    fields = {"model": args.model, "prompt": prompt, "n": "1", "response_format": "b64_json"}
-    if args.size:
-        fields["size"] = args.size
+    if args.endpoint == "/v1/images/edits":
+        media = args.edit_image
+        part_name = "image"
+        content_type = IMAGE_CONTENT_TYPES.get(media["format"], "application/octet-stream")
+        fields = {"model": args.model, "n": "1", "response_format": "b64_json"}
+        if prompt:
+            fields["prompt"] = prompt
+        if args.size:
+            fields["size"] = args.size
+    else:
+        media = args.transcribe_audio
+        part_name = "file"
+        content_type = AUDIO_CONTENT_TYPES.get(media["format"], "application/octet-stream")
+        fields = {"model": args.model, "response_format": "json"}
+        # The prompt is an optional recognition hint: sent only when
+        # explicitly supplied, never the script default.
+        if prompt:
+            fields["prompt"] = prompt
+        if args.language:
+            fields["language"] = args.language
     parts = []
     for name, value in fields.items():
         parts.append(
             f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8")
         )
-    filename = edit_image["name"].replace('"', "_").replace("\r", "_").replace("\n", "_")
+    filename = media["name"].replace('"', "_").replace("\r", "_").replace("\n", "_")
     parts.append(
         (
-            f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{filename}"\r\n'
-            f'Content-Type: {IMAGE_CONTENT_TYPES[edit_image["format"]]}\r\n\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{part_name}"; filename="{filename}"\r\n'
+            f'Content-Type: {content_type}\r\n\r\n'
         ).encode("utf-8")
-        + edit_image["data"]
+        + media["data"]
         + b"\r\n"
     )
     parts.append(f"--{boundary}--\r\n".encode("utf-8"))
@@ -280,8 +381,8 @@ def request_body(args, prompt, modalities):
     Called before the request timer starts: E2E covers the HTTP request and
     response validation, not local body construction.
     """
-    if args.endpoint == "/v1/images/edits":
-        return multipart_body(args, prompt, args.edit_image)
+    if args.endpoint in ("/v1/images/edits", "/v1/audio/transcriptions"):
+        return multipart_body(args, prompt, modalities)
     return json.dumps(payload_for(args, prompt, modalities)).encode("utf-8"), "application/json"
 
 
@@ -365,7 +466,11 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
         result["image_format"] = None
         result["image_bytes"] = None
         result["image_dimensions"] = None
-    json_endpoints = ("/v1/embeddings",) + IMAGE_ENDPOINTS
+    if args.endpoint == "/v1/audio/transcriptions":
+        result["transcript_chars"] = None
+        result["transcript_empty"] = None  # True when a valid response had no text
+        result["transcript_format"] = None  # json | text
+    json_endpoints = ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",)
     body, body_content_type = request_body(args, prompt, modalities)
     headers = {
         "Content-Type": body_content_type,
@@ -407,6 +512,38 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
                 document = read_image_response(response, content_type, result, label)
                 if isinstance(document.get("usage"), dict):
                     result["usage"] = document["usage"]
+                result["status"] = "ok"
+                return result
+            if args.endpoint == "/v1/audio/transcriptions":
+                if "application/json" in content_type.lower():
+                    try:
+                        document = json.loads(response.read())
+                    except (ValueError, UnicodeDecodeError) as error:
+                        raise RuntimeError("invalid transcription JSON") from error
+                    if not isinstance(document, dict):
+                        raise RuntimeError("invalid transcription response: expected an object")
+                    if document.get("error"):
+                        raise RuntimeError(f"server error: {str(document['error'])[:500]}")
+                    transcript = document.get("text")
+                    if not isinstance(transcript, str):
+                        raise RuntimeError("invalid transcription response: expected a text field")
+                    if isinstance(document.get("usage"), dict):
+                        result["usage"] = document["usage"]
+                    result["transcript_format"] = "json"
+                elif "text/" in content_type.lower():
+                    # Some servers ignore response_format and answer with the
+                    # plain transcript; accept it rather than failing the run.
+                    transcript = response.read().decode("utf-8", errors="replace")
+                    result["transcript_format"] = "text"
+                else:
+                    snippet = response.read(1000).decode("utf-8", errors="replace")
+                    raise RuntimeError(f"expected JSON or text, got {content_type!r}: {snippet}")
+                # An empty transcript is a valid response (e.g. silence) but
+                # is excluded from latency samples and rankings.
+                result["transcript_chars"] = len(transcript)
+                result["transcript_empty"] = not transcript
+                text_parts.append(transcript)
+                visible_parts.append(transcript)
                 result["status"] = "ok"
                 return result
             if args.endpoint == "/v1/embeddings":
@@ -697,6 +834,14 @@ def print_debug_results(results, total):
                     detail += f", {result['image_dimensions'][0]}x{result['image_dimensions'][1]} px"
                 print(f"    Image: {detail} ({result['image_content']})")
             print(f"    E2E {format_ms(result['e2e_ms'])} ms")
+        elif "transcript_chars" in result:
+            if result["transcript_chars"] is not None:
+                empty = " (empty transcript)" if result["transcript_empty"] else ""
+                print(f"    Transcript: {result['transcript_chars']} chars, {result['transcript_format']}{empty}")
+                if not result["transcript_empty"]:
+                    preview = (result["text"] or "").replace("\n", " ")[:60]
+                    print(f"    Text: {preview!r}")
+            print(f"    E2E {format_ms(result['e2e_ms'])} ms")
         else:
             print(
                 f"    TTFT {format_ms(result['ttft_ms']):>8}   "
@@ -972,8 +1117,12 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     # Image runs: only responses whose content was verified (PNG signature and
     # header) feed latency samples and rankings; url-only and non-PNG base64
     # responses stay "ok" but unverified, and are reported separately.
+    # Transcription runs: empty transcripts (valid responses, e.g. silence)
+    # are excluded the same way, so a failed recognition cannot look fast.
     if args.endpoint in IMAGE_ENDPOINTS:
         latency_valid = [r for r in valid if r.get("image_content") == "b64-validated"]
+    elif args.endpoint == "/v1/audio/transcriptions":
+        latency_valid = [r for r in valid if r.get("transcript_chars")]
     else:
         latency_valid = valid
     samples = metric_samples(latency_valid)
@@ -998,6 +1147,8 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     if args.endpoint in IMAGE_ENDPOINTS:
         run["validated_responses"] = len(latency_valid)
         run["unverified_responses"] = len(valid) - len(latency_valid)
+    if args.endpoint == "/v1/audio/transcriptions":
+        run["empty_transcripts"] = len(valid) - len(latency_valid)
     if score_summary is not None:
         run["epp_scores"] = score_summary
     if args.session_length:
@@ -1017,6 +1168,7 @@ def print_run_report(run, args, modalities):
         "Embedding results" if args.endpoint == "/v1/embeddings"
         else "Image edit results" if args.endpoint == "/v1/images/edits"
         else "Image generation results" if args.endpoint == "/v1/images/generations"
+        else "Transcription results" if args.endpoint == "/v1/audio/transcriptions"
         else "Streaming results"
     )
     print(f"\n{title}")
@@ -1033,11 +1185,24 @@ def print_run_report(run, args, modalities):
         if dimensions:
             describe += f", {dimensions[0]}x{dimensions[1]} px"
         print(f"  Input image:  {edit_image.get('name')} ({describe}, sha256 {edit_image.get('sha256', '')[:12]}…)")
+    if args.endpoint == "/v1/audio/transcriptions":
+        audio = {key: value for key, value in (args.transcribe_audio or {}).items() if key != "data"}
+        describe = f"{audio.get('format') or 'unknown format'}, {audio.get('bytes')} bytes"
+        if audio.get("duration_seconds") is not None:
+            describe += f", {audio['duration_seconds']} s"
+        language = f", language {args.language}" if args.language else ""
+        print(f"  Input audio:  {audio.get('name')} ({describe}, sha256 {audio.get('sha256', '')[:12]}…{language})")
     print(f"  Requests:     {iterations} total, up to {run['concurrency']} concurrent")
     if args.endpoint in IMAGE_ENDPOINTS:
         print(
             f"  Responses:    {run['validated_responses']} content-verified, "
             f"{run['unverified_responses']} unverified, "
+            f"{len(failures)} failed, {len(missing)} missing requested output"
+        )
+    elif args.endpoint == "/v1/audio/transcriptions":
+        print(
+            f"  Responses:    {len(valid)} with transcript, "
+            f"{run['empty_transcripts']} empty transcript, "
             f"{len(failures)} failed, {len(missing)} missing requested output"
         )
     else:
@@ -1046,15 +1211,22 @@ def print_run_report(run, args, modalities):
 
     latency_title = (
         "Latency (content-verified responses)" if args.endpoint in IMAGE_ENDPOINTS
+        else "Latency (nonempty transcripts)" if args.endpoint == "/v1/audio/transcriptions"
         else "Latency (valid responses)"
     )
     print_section(latency_title)
-    if args.endpoint == "/v1/embeddings" or args.endpoint in IMAGE_ENDPOINTS:
+    if args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
         print_latency_table([("End-to-end", samples["e2e_ms"], "ms")])
         if args.endpoint in IMAGE_ENDPOINTS and run["unverified_responses"]:
             print(
                 f"  {run['unverified_responses']} response(s) with unverified content "
                 "(url or non-PNG base64) are excluded from latency and rankings."
+            )
+        if args.endpoint == "/v1/audio/transcriptions" and run["empty_transcripts"]:
+            print(
+                f"  {run['empty_transcripts']} empty transcript(s) are excluded from latency "
+                "and rankings; empty can be legitimate for silence, but a failed "
+                "recognition should not look fast."
             )
     elif args.endpoint == "/v1/audio/speech":
         print_latency_table([
@@ -1090,6 +1262,7 @@ def print_run_report(run, args, modalities):
     if len(counts) > 1:
         pod_title = (
             "Latency by pod (content-verified responses)" if args.endpoint in IMAGE_ENDPOINTS
+            else "Latency by pod (nonempty transcripts)" if args.endpoint == "/v1/audio/transcriptions"
             else "Latency by pod (valid responses)"
         )
         print_section(pod_title)
@@ -1098,7 +1271,7 @@ def print_run_report(run, args, modalities):
             if not pod_results:
                 continue
             print(f"  {pod}")
-            if args.endpoint == "/v1/embeddings" or args.endpoint in IMAGE_ENDPOINTS:
+            if args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
                 print_latency_table([("End-to-end", [r["e2e_ms"] for r in pod_results], "ms")])
             elif args.endpoint == "/v1/audio/speech":
                 print_latency_table([
@@ -1116,6 +1289,15 @@ def print_run_report(run, args, modalities):
     print_section("Notes")
     if args.endpoint == "/v1/embeddings":
         print("  Embeddings are non-streaming; latency covers the complete response.")
+    elif args.endpoint == "/v1/audio/transcriptions":
+        print("  Transcription is non-streaming; end-to-end latency covers the HTTP request")
+        print("  (including the multipart upload) and response validation, but not local")
+        print("  multipart construction.")
+        print("  The prompt is an optional recognition hint and is sent only when explicitly")
+        print("  provided. The input audio is described by a header check only (format label")
+        print("  and WAV duration when parseable); unrecognized formats are sent as-is.")
+        print("  All requests reuse the same input audio; server-side caching of that input")
+        print("  may warm up across requests.")
     elif args.endpoint == "/v1/images/edits":
         print("  Image edits are non-streaming; end-to-end latency covers the HTTP request")
         print("  (including the multipart upload) and response validation, but not local")
@@ -1175,13 +1357,14 @@ def print_suite_report(runs, args, modalities):
         valid_note = (
             f"valid {run['valid_responses']}/{run['iterations']}"
             + (f" ({run['unverified_responses']} unverified)" if "unverified_responses" in run else "")
+            + (f" ({run['empty_transcripts']} empty)" if "empty_transcripts" in run else "")
         )
         print(
             f"     Load {run['iterations']} requests x {run['concurrency']} concurrent  |  "
             f"{valid_note}  |  "
             f"failed {run['failed_responses']}  |  {run['duration_seconds']:.1f} s"
         )
-        if args.endpoint == "/v1/embeddings" or args.endpoint in IMAGE_ENDPOINTS:
+        if args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
             print(f"     E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms")
         elif args.endpoint == "/v1/audio/speech":
             print(
@@ -1213,6 +1396,10 @@ def print_suite_report(runs, args, modalities):
     print("  Profiles run sequentially; requests within each run use the stated concurrency.")
     if args.endpoint == "/v1/embeddings":
         print("  Embeddings are non-streaming; latency covers the complete response.")
+    elif args.endpoint == "/v1/audio/transcriptions":
+        print("  Transcription is non-streaming; latency is reported only for responses with a")
+        print("  nonempty transcript (see the single-run report for details). All requests reuse")
+        print("  the same input audio; server-side caching may warm up.")
     elif args.endpoint == "/v1/images/edits":
         print("  Image edits are non-streaming; latency is reported only for responses with")
         print("  content-verified PNG output (see the single-run report for details). All edit")
@@ -1246,13 +1433,15 @@ def main():
         help="OpenAI-compatible API endpoint (default: /v1/chat/completions).",
     )
     parser.add_argument("--model", default="qwen3-omni")
-    parser.add_argument("--prompt", default="Say hello and introduce yourself in one sentence.")
+    parser.add_argument("--prompt", help="Request prompt. For /v1/audio/transcriptions this is an optional recognition hint, sent only when provided; other endpoints default to a short greeting.")
     parser.add_argument("--prompts-file", type=Path, help="One prompt per nonempty line; cycles through them.")
     parser.add_argument("--modalities", default="text,audio", help="Chat-completions output: text, audio, or text,audio.")
     parser.add_argument("--voice", help="Optional audio voice passed to the API.")
     parser.add_argument("--audio-format", help="Optional audio format passed to the API.")
     parser.add_argument("--size", help="Optional image size for image endpoints (e.g. 1024x1024). Omitted means the server default, which may vary between servers.")
     parser.add_argument("--image", type=Path, help="Path to the input image for /v1/images/edits (required for that endpoint). The same image is sent with every request.")
+    parser.add_argument("--audio", type=Path, help="Path to the input audio file for /v1/audio/transcriptions (required for that endpoint). The same audio is sent with every request.")
+    parser.add_argument("--language", help="Optional language for /v1/audio/transcriptions (e.g. en); omitted means the model default, often auto-detection.")
     parser.add_argument("--no-usage", action="store_true", help="Omit stream_options.include_usage.")
     parser.add_argument("--iterations", "-n", type=int, default=10, help="Total requests for a single run or default suite run.")
     parser.add_argument("--concurrency", "-c", type=int, default=1, help="Maximum simultaneous requests per run.")
@@ -1310,11 +1499,26 @@ def main():
         parser.error("--image applies only to /v1/images/edits runs")
     if args.endpoint == "/v1/images/edits" and not args.image:
         parser.error("--image is required for /v1/images/edits runs")
+    if args.audio and args.endpoint != "/v1/audio/transcriptions":
+        parser.error("--audio applies only to /v1/audio/transcriptions runs")
+    if args.endpoint == "/v1/audio/transcriptions" and not args.audio:
+        parser.error("--audio is required for /v1/audio/transcriptions runs")
+    if args.language and args.endpoint != "/v1/audio/transcriptions":
+        parser.error("--language applies only to /v1/audio/transcriptions runs")
     args.edit_image = load_edit_image(args.image) if args.endpoint == "/v1/images/edits" else None
+    args.transcribe_audio = (
+        load_transcribe_audio(args.audio) if args.endpoint == "/v1/audio/transcriptions" else None
+    )
+    # The prompt default applies to every endpoint except transcription,
+    # where it would silently act as a recognition hint.
+    if args.prompt is None and args.endpoint != "/v1/audio/transcriptions":
+        args.prompt = "Say hello and introduce yourself in one sentence."
     if args.endpoint == "/v1/embeddings":
         modalities = ["embedding"]
     elif args.endpoint in IMAGE_ENDPOINTS:
         modalities = ["image"]
+    elif args.endpoint == "/v1/audio/transcriptions":
+        modalities = ["transcription"]
     elif args.endpoint == "/v1/audio/speech":
         modalities = ["audio"]
     else:
@@ -1357,6 +1561,8 @@ def main():
                 "modalities": modalities,
                 "image_size": args.size or None if args.endpoint in IMAGE_ENDPOINTS else None,
                 "edit_image": public_edit_image(args.edit_image),
+                "transcribe_audio": public_edit_image(args.transcribe_audio),
+                "language": args.language if args.endpoint == "/v1/audio/transcriptions" else None,
                 "runs": [serializable_run(run) for run in runs],
             }
         else:
@@ -1368,6 +1574,14 @@ def main():
                 "modalities": modalities,
                 "image_size": args.size or None,
                 "edit_image": public_edit_image(args.edit_image),
+            })
+        if args.endpoint == "/v1/audio/transcriptions":
+            payload.update({
+                "model": args.model,
+                "endpoint": endpoint_url(args.url, args.endpoint),
+                "modalities": modalities,
+                "transcribe_audio": public_edit_image(args.transcribe_audio),
+                "language": args.language,
             })
         args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
         print(f"\nSaved detailed JSON: {args.output_json}")

@@ -244,10 +244,11 @@ async def create_run(request: Request):
     """Create a run.
 
     Accepts the usual JSON body, or multipart/form-data with a "params"
-    field (the same JSON as a string) plus an "image" file for
-    /v1/images/edits runs. The uploaded image is stored inside the run
-    directory, so deleting the run removes it; its hash and metadata are
-    kept in the run params and results for comparison checks.
+    field (the same JSON as a string) plus a "file" upload for
+    /v1/images/edits (image) and /v1/audio/transcriptions (audio) runs.
+    The uploaded file is stored inside the run directory, so deleting the
+    run removes it; its hash and metadata are kept in the run params and
+    results for comparison checks.
     """
     upload_data = None
     upload_name = None
@@ -259,7 +260,7 @@ async def create_run(request: Request):
                 payload = json.loads(str(form["params"]))
             except ValueError:
                 raise HTTPException(status_code=400, detail="the 'params' field must contain JSON")
-            file = form.get("image")
+            file = form.get("file")
             if file is not None and hasattr(file, "read"):
                 upload_data = await file.read()
                 upload_name = getattr(file, "filename", None)
@@ -283,11 +284,19 @@ async def create_run(request: Request):
             inspect_edit_image(upload_data, upload_name or "input-image")
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
-        path, info = store.save_run_image(run_id, upload_data, upload_name or "input-image")
-        params.image = str(path)
-        params.image_info = info
+        path, info = store.save_run_input(run_id, upload_data, upload_name or "input-image")
+        params.input_file = str(path)
+        params.input_info = info
+    elif params.endpoint == "/v1/audio/transcriptions":
+        if upload_data is None:
+            raise HTTPException(status_code=400, detail="/v1/audio/transcriptions runs require an uploaded audio file")
+        # Audio inputs are accepted as-is: the format label is informational
+        # and unrecognized formats are not rejected (the server decides).
+        path, info = store.save_run_input(run_id, upload_data, upload_name or "input-audio")
+        params.input_file = str(path)
+        params.input_info = info
     elif upload_data is not None:
-        raise HTTPException(status_code=400, detail="image upload is only valid for /v1/images/edits runs")
+        raise HTTPException(status_code=400, detail="file upload is only valid for image-edit and transcription runs")
     run = manager.create(body.name, params, run_id=run_id)
     return {"id": run.run_id}
 

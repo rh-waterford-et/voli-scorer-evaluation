@@ -71,11 +71,11 @@ export const api = {
     }
   },
 
-  createRun: (body: { name?: string | null; params: unknown }, image?: File | null) => {
-    if (!image) return postJSON<{ id: string }>('/api/runs', body)
+  createRun: (body: { name?: string | null; params: unknown }, file?: File | null) => {
+    if (!file) return postJSON<{ id: string }>('/api/runs', body)
     const form = new FormData()
     form.append('params', JSON.stringify(body))
-    form.append('image', image)
+    form.append('file', file)
     return fetch('/api/runs', { method: 'POST', body: form }).then(async (response) => {
       if (!response.ok) {
         const detail = await response.json().catch(() => null)

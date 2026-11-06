@@ -137,8 +137,8 @@ npm run build
 ```
 
 For `/v1/chat/completions` runs, the benchmark needs a tokenizer, so install
-`transformers` into the same venv (TTS, embeddings and image runs need
-nothing extra):
+`transformers` into the same venv (TTS, embeddings, image and transcription
+runs need nothing extra):
 
 ```bash
 dashboard/.venv/bin/pip install transformers

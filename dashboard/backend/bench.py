@@ -13,7 +13,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits")
+ENDPOINTS = ("/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits", "/v1/audio/transcriptions")
 
 
 class LoadSetting(BaseModel):
@@ -26,7 +26,7 @@ class LoadSetting(BaseModel):
 class RunParams(BaseModel):
     """Benchmark parameters; mirrors the stream_metrics.py flags we expose."""
 
-    endpoint: Literal["/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits"] = "/v1/audio/speech"
+    endpoint: Literal["/v1/chat/completions", "/v1/audio/speech", "/v1/embeddings", "/v1/images/generations", "/v1/images/edits", "/v1/audio/transcriptions"] = "/v1/audio/speech"
     model: str = Field(default="qwen3-tts", min_length=1)
     url: str = Field(default="http://10.6.62.51:31670", min_length=1)
     # Required: the caller picks profiles explicitly. "default" is a valid
@@ -40,12 +40,14 @@ class RunParams(BaseModel):
     voice: Optional[str] = None
     audio_format: Optional[str] = None
     image_size: Optional[str] = None  # image endpoints; None = server default
-    # Server-side path to the uploaded edit input image (set by the backend
-    # when a run is created with an upload; not a user-facing form field).
-    image: Optional[str] = None
-    # Uploaded-image metadata kept with the run for Compare confounders:
-    # {name, bytes, sha256, format?, dimensions?}
-    image_info: Optional[dict] = None
+    language: Optional[str] = None  # /v1/audio/transcriptions; None = model default
+    # Server-side path to the uploaded run input file (image edit or
+    # transcription audio; set by the backend when a run is created with an
+    # upload; not a user-facing form field).
+    input_file: Optional[str] = None
+    # Uploaded-input metadata kept with the run for Compare confounders:
+    # {name, bytes, sha256, format?, dimensions?/duration_seconds?}
+    input_info: Optional[dict] = None
     tokenizer: Optional[str] = None  # required for /v1/chat/completions
     api_key: Optional[str] = None
 
@@ -122,8 +124,12 @@ class RunParams(BaseModel):
                 argv.append("--no-usage")
         if self.image_size and self.endpoint in ("/v1/images/generations", "/v1/images/edits"):
             argv += ["--size", self.image_size.strip()]
-        if self.image and self.endpoint == "/v1/images/edits":
-            argv += ["--image", self.image]
+        if self.input_file and self.endpoint == "/v1/images/edits":
+            argv += ["--image", self.input_file]
+        if self.input_file and self.endpoint == "/v1/audio/transcriptions":
+            argv += ["--audio", self.input_file]
+        if self.language and self.endpoint == "/v1/audio/transcriptions":
+            argv += ["--language", self.language.strip()]
         if self.voice and self.endpoint in ("/v1/audio/speech", "/v1/chat/completions"):
             argv += ["--voice", self.voice]
         if self.audio_format and self.endpoint in ("/v1/audio/speech", "/v1/chat/completions"):

@@ -137,7 +137,7 @@ class DashboardHttpTests(unittest.IsolatedAsyncioTestCase):
                 boundary = "dashboard-test-boundary"
                 body = (f'--{boundary}\r\nContent-Disposition: form-data; name="params"\r\n\r\n'
                         f'{json.dumps(params)}\r\n--{boundary}\r\n'
-                        'Content-Disposition: form-data; name="image"; filename="my-cat.png"\r\n'
+                        'Content-Disposition: form-data; name="file"; filename="my-cat.png"\r\n'
                         'Content-Type: image/png\r\n\r\n').encode() + INPUT_PNG + f"\r\n--{boundary}--\r\n".encode()
                 scope = {
                     "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",

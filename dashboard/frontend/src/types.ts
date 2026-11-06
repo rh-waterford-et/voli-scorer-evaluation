@@ -70,6 +70,10 @@ export interface RequestResult {
   image_format?: string | null
   image_bytes?: number | null
   image_dimensions?: number[] | null
+  transcript_chars?: number | null
+  transcript_empty?: boolean | null
+  transcript_format?: string | null
+  text?: string | null
   ttft_ms?: number | null
   ttfo_ms?: number | null
   ttfa_ms?: number | null
@@ -123,12 +127,13 @@ export interface RunSummary {
   unverified?: number
 }
 
-export interface EditImageInfo {
+export interface InputFileInfo {
   name?: string | null
   bytes?: number | null
   sha256?: string | null
   format?: string | null
   dimensions?: number[] | null
+  duration_seconds?: number | null
 }
 
 export interface RunParams {
@@ -143,8 +148,9 @@ export interface RunParams {
   voice?: string | null
   audio_format?: string | null
   image_size?: string | null
-  image?: string | null
-  image_info?: EditImageInfo | null
+  language?: string | null
+  input_file?: string | null
+  input_info?: InputFileInfo | null
   tokenizer?: string | null
   api_key?: string | null
   session_length?: number
@@ -169,7 +175,9 @@ export interface ResultsDoc {
   endpoint: string | null
   modalities: string[]
   image_size?: string | null
-  edit_image?: EditImageInfo | null
+  edit_image?: InputFileInfo | null
+  transcribe_audio?: InputFileInfo | null
+  language?: string | null
   runs: ScriptRun[]
 }
 
