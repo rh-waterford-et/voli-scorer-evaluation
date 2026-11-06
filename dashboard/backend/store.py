@@ -61,6 +61,7 @@ def normalize_output(document) -> Optional[dict]:
             "image_size": document.get("image_size"),
             "edit_image": document.get("edit_image"),
             "transcribe_audio": document.get("transcribe_audio"),
+            "transcription_hints": document.get("transcription_hints"),
             "language": document.get("language"),
             "runs": document["runs"],
         }
@@ -70,6 +71,7 @@ def normalize_output(document) -> Optional[dict]:
             "modalities": document.get("modalities", []), "image_size": document.get("image_size"),
             "edit_image": document.get("edit_image"),
             "transcribe_audio": document.get("transcribe_audio"),
+            "transcription_hints": document.get("transcription_hints"),
             "language": document.get("language"),
             "runs": [document],
         }
@@ -204,7 +206,7 @@ class RunStore:
     def load_results(self, meta: dict) -> Optional[dict]:
         """Merge every completed attempt's result file into one document."""
         runs = []
-        model = endpoint = image_size = edit_image = transcribe_audio = language = None
+        model = endpoint = image_size = edit_image = transcribe_audio = language = transcription_hints = None
         modalities: list = []
         for attempt in meta.get("profiles", []):
             relative = attempt.get("result_file")
@@ -225,6 +227,8 @@ class RunStore:
             image_size = image_size or normalized.get("image_size")
             edit_image = edit_image or normalized.get("edit_image")
             transcribe_audio = transcribe_audio or normalized.get("transcribe_audio")
+            if transcription_hints is None:
+                transcription_hints = normalized.get("transcription_hints")
             language = language or normalized.get("language")
             modalities = modalities or normalized["modalities"] or []
             runs.extend(normalized["runs"])
@@ -244,12 +248,15 @@ class RunStore:
                 "/v1/audio/transcriptions": ["transcription"],
             }.get(params.get("endpoint"), [])
         image_size = image_size or params.get("image_size")
-        edit_image = edit_image or params.get("input_info")
-        transcribe_audio = transcribe_audio or params.get("input_info")
+        if params.get("endpoint") == "/v1/images/edits":
+            edit_image = edit_image or params.get("input_info")
+        elif params.get("endpoint") == "/v1/audio/transcriptions":
+            transcribe_audio = transcribe_audio or params.get("input_info")
         language = language or params.get("language")
         return {"model": model, "endpoint": endpoint, "modalities": modalities,
                 "image_size": image_size, "edit_image": edit_image,
-                "transcribe_audio": transcribe_audio, "language": language, "runs": runs}
+                "transcribe_audio": transcribe_audio, "transcription_hints": transcription_hints,
+                "language": language, "runs": runs}
 
     def ensure_summary(self, meta: dict) -> Optional[dict]:
         summary = meta.get("summary")

@@ -100,6 +100,7 @@ export interface ScriptRun {
   missing_output_responses: number
   validated_responses?: number
   unverified_responses?: number
+  empty_transcripts?: number
   routing: Record<string, number>
   metrics: Record<string, MetricSummary>
   results?: RequestResult[]
@@ -125,6 +126,7 @@ export interface RunSummary {
   valid: number
   failed: number
   unverified?: number
+  empty_transcripts?: number
 }
 
 export interface InputFileInfo {
@@ -177,6 +179,7 @@ export interface ResultsDoc {
   image_size?: string | null
   edit_image?: InputFileInfo | null
   transcribe_audio?: InputFileInfo | null
+  transcription_hints?: string[] | null
   language?: string | null
   runs: ScriptRun[]
 }

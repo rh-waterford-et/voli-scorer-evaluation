@@ -7,11 +7,11 @@ import hashlib
 import io
 import json
 from pathlib import Path
-import struct
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "scripts"), str(ROOT / "dashboard" / "backend")]
@@ -23,16 +23,15 @@ from store import normalize_output, summarize_output
 from fastapi import HTTPException
 
 
-def make_wav(seconds=2.0, byte_rate=8000, sample_width=2):
+def make_wav(seconds=2.0, sample_rate=8000, sample_width=2, channels=1):
     """A minimal PCM WAV with a known duration (silence)."""
-    data_size = int(byte_rate * seconds)
-    fmt = struct.pack("<HHIIHH", 1, 1, byte_rate, byte_rate, sample_width, 16)
-    body = b"\x00" * data_size
-
-    def chunk(tag, payload):
-        return tag + struct.pack("<I", len(payload)) + payload
-
-    return b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(body)) + b"WAVE" + chunk(b"fmt ", fmt) + chunk(b"data", body)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(channels)
+        audio.setsampwidth(sample_width)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b"\x00" * (int(sample_rate * seconds) * channels * sample_width))
+    return buffer.getvalue()
 
 
 class Response:
@@ -129,6 +128,9 @@ class TranscriptionTests(unittest.TestCase):
         result, _ = run_with(transcript_response(""))
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["transcript_empty"])
+        result, _ = run_with(transcript_response(" \n \t"))
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["transcript_empty"])
         # Plain-text responses are accepted (servers may ignore response_format).
         result, _ = run_with(b"hello world", content_type="text/plain")
         self.assertEqual(result["status"], "ok")
@@ -141,6 +143,12 @@ class TranscriptionTests(unittest.TestCase):
                 self.assertTrue(result["error"])
         result, _ = run_with(b"oops", content_type="audio/wav")
         self.assertIn("expected JSON or text", result["error"])
+        for content_type, body in (("text/html", b"<html>error</html>"),
+                                   ("text/event-stream", b'data: {"error":"failed"}\n\n'),
+                                   ("text/plain; charset=utf-8", b"\xff")):
+            with self.subTest(content_type=content_type):
+                result, _ = run_with(body, content_type=content_type)
+                self.assertEqual(result["status"], "failed")
 
     def test_audio_description_and_duration(self):
         wav = make_wav(2.5)
@@ -164,9 +172,16 @@ class TranscriptionTests(unittest.TestCase):
         self.assertEqual(metrics.sniff_audio_format(b"fLaC" + b"\x00" * 8), "flac")
         self.assertEqual(metrics.sniff_audio_format(b"OggS" + b"\x00" * 8), "ogg")
         self.assertEqual(metrics.sniff_audio_format(b"ID3\x03\x00" + b"\x00" * 8), "mp3")
+        for channels, width in ((1, 2), (2, 2), (1, 1)):
+            with self.subTest(channels=channels, width=width):
+                self.assertEqual(metrics.wav_duration(make_wav(2.0, 16000, width, channels)), 2.0)
+        self.assertIsNone(metrics.wav_duration(wav[:-1]))
+        compressed = bytearray(wav)
+        compressed[20:22] = b"\x55\x00"  # non-PCM WAV: duration remains unknown
+        self.assertIsNone(metrics.wav_duration(bytes(compressed)))
 
     def test_cli_suite_excludes_empty_transcripts(self):
-        bodies = [transcript_response("hello"), transcript_response(""), transcript_response("world")]
+        bodies = [transcript_response("hello"), transcript_response(" \n"), transcript_response("world")]
         with tempfile.TemporaryDirectory() as temp:
             audio_path = Path(temp) / "clip.wav"
             audio_path.write_bytes(make_wav(1.0))
@@ -187,6 +202,7 @@ class TranscriptionTests(unittest.TestCase):
                 metrics.main()
             document = json.loads(output.read_text())
             self.assertEqual(document["language"], "en")
+            self.assertEqual(document["transcription_hints"], [])
             self.assertEqual(document["transcribe_audio"]["sha256"], hashlib.sha256(audio_path.read_bytes()).hexdigest())
             self.assertNotIn("data", document["transcribe_audio"])
             for run in document["runs"]:
@@ -214,6 +230,63 @@ class TranscriptionTests(unittest.TestCase):
                 metrics.main()
             fields, _files = parse_multipart(captured["request"])
             self.assertNotIn("prompt", fields)
+            self.assertEqual(json.loads(output.read_text())["transcription_hints"], [])
+
+    def test_session_latency_excludes_empty_transcripts(self):
+        base = {
+            "session_id": "session-1", "session_token_sent": None, "session_token_received": None,
+            "pod": None, "status": "ok", "missing_modalities": [], "ttft_ms": None,
+            "ttfa_ms": None, "e2e_ms": 1.0,
+        }
+        results = [
+            dict(base, session_turn=1, transcript_empty=True),
+            dict(base, session_turn=2, transcript_empty=False, session_token_sent="token"),
+        ]
+        args = argparse.Namespace(session_header="x-session-token", session_length=2)
+        summary = metrics.summarize_sessions(args, results, 1)
+        self.assertEqual(summary["latency"]["initial"]["e2e_ms"]["n"], 0)
+        self.assertEqual(summary["latency"]["replayed"]["e2e_ms"]["n"], 1)
+
+    def test_cli_reports_record_single_and_multiple_hints(self):
+        with tempfile.TemporaryDirectory() as temp:
+            audio_path = Path(temp) / "clip.wav"
+            audio_path.write_bytes(make_wav(0.1))
+            prompts_path = Path(temp) / "prompts.txt"
+            prompts_path.write_text("first hint\nsecond hint\n")
+            output = Path(temp) / "result.json"
+            cases = [(["--prompt", "single hint"], ["single hint"]),
+                     (["--prompts-file", str(prompts_path)], ["first hint", "second hint"])]
+            for prompt_args, expected in cases:
+                for runs in (["--run", "2x1"], ["--run", "2x1", "--run", "2x1"]):
+                    argv = ["stream_metrics.py", "--endpoint", "/v1/audio/transcriptions", "--model", "whisper",
+                            "--audio", str(audio_path), "--no-backend-lookup", "--output-json", str(output),
+                            *prompt_args, *runs]
+                    with self.subTest(prompt_args=prompt_args, runs=runs), patch.object(sys, "argv", argv), patch.object(
+                        metrics.urllib.request, "urlopen", side_effect=lambda *a, **k: Response(transcript_response("hi")),
+                    ), contextlib.redirect_stdout(io.StringIO()):
+                        metrics.main()
+                        document = json.loads(output.read_text())
+                        self.assertEqual(document["transcription_hints"], expected)
+                        self.assertEqual(normalize_output(document)["transcription_hints"], expected)
+
+    def test_run_results_preserve_only_matching_input_type(self):
+        from store import RunStore
+
+        with tempfile.TemporaryDirectory() as temp:
+            store = RunStore(Path(temp))
+            for run_id, endpoint, result_key, other_key in (
+                ("audio", "/v1/audio/transcriptions", "transcribe_audio", "edit_image"),
+                ("image", "/v1/images/edits", "edit_image", "transcribe_audio"),
+            ):
+                info = {"name": f"{run_id}.dat", "sha256": "abc"}
+                result_path = store.run_dir(run_id) / "result.json"
+                result_path.parent.mkdir()
+                result_path.write_text(json.dumps({"profile": "default", "metrics": {}, result_key: info}))
+                meta = {"id": run_id, "params": {"endpoint": endpoint, "input_info": info},
+                        "profiles": [{"result_file": "result.json"}]}
+                merged = store.load_results(meta)
+                self.assertEqual(merged[result_key], info)
+                self.assertIsNone(merged[other_key])
 
     def test_dashboard_params_and_summary(self):
         params = RunParams(endpoint="/v1/audio/transcriptions", model="whisper", profiles=["default"],

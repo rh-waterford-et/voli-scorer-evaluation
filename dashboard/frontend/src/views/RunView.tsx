@@ -410,6 +410,14 @@ export default function RunView() {
       render: (r) => r.unverified_responses ?? 0,
     })
   }
+  if (runs.some((run) => run.empty_transcripts != null)) {
+    columns.push({
+      key: 'empty', label: 'Empty', align: 'right',
+      title: 'Successful responses with empty transcripts, excluded from latency',
+      sort: (r) => r.empty_transcripts ?? 0,
+      render: (r) => r.empty_transcripts ?? 0,
+    })
+  }
   if (hasAudio) {
     columns.push(
       { key: 'ttfa_p50', label: 'TTFA p50', title: 'Time to first audio event, ms — client-observed (median)', align: 'right', sort: (r) => metricOf(r, 'ttfa_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttfa_ms', 'p50')) },

@@ -12,6 +12,7 @@ import base64
 import binascii
 from collections import Counter
 import hashlib
+import io
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 import ipaddress
@@ -26,6 +27,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import wave
 import zlib
 
 from epp_scores import EppScoreCollector, print_request_scores, print_score_summary
@@ -211,28 +213,16 @@ def sniff_audio_format(data):
 
 
 def wav_duration(data):
-    """Duration in seconds from a WAV header's fmt/data chunks, or None.
-
-    Uses the fmt chunk's average byte rate, so compressed WAV variants work
-    too; any parse doubt returns None. Header check only.
-    """
-    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+    """Duration of a complete PCM WAV, or None for unsupported/invalid input."""
+    try:
+        with wave.open(io.BytesIO(data), "rb") as audio:
+            frames = audio.getnframes()
+            expected_bytes = frames * audio.getnchannels() * audio.getsampwidth()
+            if len(audio.readframes(frames)) != expected_bytes:
+                return None
+            return round(frames / audio.getframerate(), 3)
+    except (wave.Error, EOFError):
         return None
-    byte_rate = None
-    data_size = None
-    position = 12
-    while position + 8 <= len(data):
-        chunk_id = data[position:position + 4]
-        chunk_size = int.from_bytes(data[position + 4:position + 8], "little")
-        body = data[position + 8:position + 8 + chunk_size]
-        if chunk_id == b"fmt " and len(body) >= 8:
-            byte_rate = int.from_bytes(body[4:8], "little")
-        elif chunk_id == b"data":
-            data_size = len(body)
-        position += 8 + chunk_size + (chunk_size & 1)
-    if byte_rate and data_size:
-        return round(data_size / byte_rate, 3)
-    return None
 
 
 def inspect_transcribe_audio(data, name):
@@ -515,7 +505,8 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
                 result["status"] = "ok"
                 return result
             if args.endpoint == "/v1/audio/transcriptions":
-                if "application/json" in content_type.lower():
+                media_type = content_type.split(";", 1)[0].strip().lower()
+                if media_type == "application/json":
                     try:
                         document = json.loads(response.read())
                     except (ValueError, UnicodeDecodeError) as error:
@@ -530,10 +521,13 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
                     if isinstance(document.get("usage"), dict):
                         result["usage"] = document["usage"]
                     result["transcript_format"] = "json"
-                elif "text/" in content_type.lower():
+                elif media_type == "text/plain":
                     # Some servers ignore response_format and answer with the
                     # plain transcript; accept it rather than failing the run.
-                    transcript = response.read().decode("utf-8", errors="replace")
+                    try:
+                        transcript = response.read().decode("utf-8")
+                    except UnicodeDecodeError as error:
+                        raise RuntimeError("invalid transcription text encoding") from error
                     result["transcript_format"] = "text"
                 else:
                     snippet = response.read(1000).decode("utf-8", errors="replace")
@@ -541,7 +535,7 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
                 # An empty transcript is a valid response (e.g. silence) but
                 # is excluded from latency samples and rankings.
                 result["transcript_chars"] = len(transcript)
-                result["transcript_empty"] = not transcript
+                result["transcript_empty"] = not transcript.strip()
                 text_parts.append(transcript)
                 visible_parts.append(transcript)
                 result["status"] = "ok"
@@ -969,6 +963,7 @@ def is_latency_eligible(result):
         result["status"] == "ok"
         and not result["missing_modalities"]
         and ("image_content" not in result or result["image_content"] == "b64-validated")
+        and ("transcript_empty" not in result or result["transcript_empty"] is False)
     )
 
 
@@ -1119,12 +1114,7 @@ def collect_run(args, tokenizer, modalities, prompts, profile, scorer, iteration
     # responses stay "ok" but unverified, and are reported separately.
     # Transcription runs: empty transcripts (valid responses, e.g. silence)
     # are excluded the same way, so a failed recognition cannot look fast.
-    if args.endpoint in IMAGE_ENDPOINTS:
-        latency_valid = [r for r in valid if r.get("image_content") == "b64-validated"]
-    elif args.endpoint == "/v1/audio/transcriptions":
-        latency_valid = [r for r in valid if r.get("transcript_chars")]
-    else:
-        latency_valid = valid
+    latency_valid = [r for r in valid if is_latency_eligible(r)]
     samples = metric_samples(latency_valid)
     run = {
         "run_id": run_id,
@@ -1582,6 +1572,7 @@ def main():
                 "modalities": modalities,
                 "transcribe_audio": public_edit_image(args.transcribe_audio),
                 "language": args.language,
+                "transcription_hints": [prompt for prompt in prompts if prompt],
             })
         args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
         print(f"\nSaved detailed JSON: {args.output_json}")

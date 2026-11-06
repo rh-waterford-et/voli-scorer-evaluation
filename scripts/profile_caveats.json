@@ -37,7 +37,7 @@
         {
           "endpoints": ["/v1/audio/transcriptions"],
           "status": "unknown",
-          "reason": "The OpenAI parser does not claim /v1/audio/transcriptions; requests fall to the passthrough parser, so the predictor receives no workload data (upstream issue #3963, opened 2026-11-04, open). The fix (PR #3964) is open and unmerged. Deployed behavior is unverified — check the router version before trusting latency-scorer results for transcriptions."
+          "reason": "When transcription requests use the passthrough parser, the EPP does not extract workload data for the predictor (issue #3963). PR #3964 addresses transcription parsing; verify the deployed router and predictor configuration before interpreting results."
         }
       ]
     },
@@ -61,7 +61,7 @@
         {
           "endpoints": ["/v1/audio/transcriptions"],
           "status": "unknown",
-          "reason": "Transcription requests fall to the passthrough parser (issue #3963), so no prefix data is produced regardless of audio content; the fix (PR #3964) is open and unmerged. Cache-aware routing quality for transcriptions is unverified on any deployment."
+          "reason": "When transcription requests use the passthrough parser, the EPP cannot extract input for prefix matching (issue #3963). PR #3964 addresses transcription parsing; cache-aware routing remains unverified on the deployed router."
         }
       ]
     },
@@ -85,7 +85,7 @@
         {
           "endpoints": ["/v1/audio/transcriptions"],
           "status": "unknown",
-          "reason": "Transcription requests currently carry zero estimated input tokens regardless of audio length — a 1-hour file and a 5-second clip weigh the same (passthrough parser, issue #3963; fix PR #3964 open and unmerged) — so length-based decisions are meaningless until the deployed router is verified."
+          "reason": "With the passthrough parser, transcription input length is not extracted, so length-based decisions cannot reflect audio duration (issue #3963). PR #3964 addresses transcription parsing; verify the deployed router and estimation behavior."
         }
       ]
     },
@@ -109,7 +109,7 @@
         {
           "endpoints": ["/v1/audio/transcriptions"],
           "status": "unknown",
-          "reason": "Transcription requests count as zero input tokens regardless of audio length under the passthrough parser (issue #3963), so in-flight and token-load comparisons cannot see the real load; the duration-based fix (PR #3964) is open and unmerged. Verify the deployed router version before trusting token-load results for transcriptions."
+          "reason": "With the passthrough parser, transcription input is not extracted for token estimation, so token-load may not reflect audio duration (issue #3963). PR #3964 addresses transcription parsing; verify the deployed router and estimation behavior."
         }
       ]
     },
@@ -133,7 +133,7 @@
         {
           "endpoints": ["/v1/audio/transcriptions"],
           "status": "limited",
-          "reason": "Prefix data for transcriptions is unverified on current deployments (passthrough parser, issue #3963). Until verified, requests are effectively treated as cold and this exercises LRU spreading only."
+          "reason": "Prefix data for transcriptions is unverified on current deployments (issue #3963). If prefix data is missing, requests are treated as cold and this exercises LRU spreading only."
         }
       ]
     },
@@ -157,7 +157,7 @@
         {
           "endpoints": ["/v1/audio/transcriptions"],
           "status": "unknown",
-          "reason": "Transcriptions supply input audio, but the endpoint falls to the passthrough parser, which discards uploaded file parts entirely (issue #3963; the fix PR #3964 would capture the file as UploadedMedia but is open and unmerged). Whether the scorer can see the audio on a deployed router is unverified."
+          "reason": "Transcriptions supply input audio. The passthrough parser forwards the body without extracting media for EPP scoring (issue #3963); PR #3964 addresses transcription parsing. Whether this scorer receives a usable signal on the deployed router is unverified."
         }
       ]
     },

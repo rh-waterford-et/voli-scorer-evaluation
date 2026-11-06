@@ -17,6 +17,7 @@ import { api } from '../api'
 import { useTheme } from '../theme'
 import type { ProfileCheck, ProfilesCheckResponse, RunDetail, ScriptRun } from '../types'
 import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
+import { isTranscription, promptOf } from '../comparePrompts'
 
 type Stat = 'mean' | 'p50' | 'p99'
 
@@ -150,12 +151,6 @@ export default function Compare() {
   // Confounders that can dominate latency differences between runs. Runs
   // without stored settings count as unknown and only confirmed differences
   // (two or more distinct known values) warn.
-  const promptOf = (detail: RunDetail): string | null => {
-    if (!detail.params) return null
-    const text = (detail.params.prompts_text ?? '').trim()
-    if (text) return text
-    return (detail.params.prompt ?? '').trim() || '(script default)'
-  }
   const promptPreview = (value: string) => {
     const flat = value.replace(/\s+/g, ' ').trim()
     return flat.length > 64 ? `${flat.slice(0, 61)}…` : flat
@@ -278,6 +273,13 @@ export default function Compare() {
   // Transcription runs: same policy for the input audio, plus the language
   // hint (differing known languages block; one-set-one-unset warns).
   const anyTranscriptionRun = audioHashes.some((value) => value !== undefined)
+  const unknownTranscriptionHints = details.filter((detail) => isTranscription(detail) && promptOf(detail) === null).length
+  if (unknownTranscriptionHints > 0) {
+    comparisonWarnings.push(
+      `${unknownTranscriptionHints} transcription run${unknownTranscriptionHints === 1 ? '' : 's'} ` +
+        `${unknownTranscriptionHints === 1 ? 'has' : 'have'} no recorded prompt information; recognition hints may differ.`,
+    )
+  }
   const knownAudioHashes = Array.from(new Set(audioHashes.filter((value): value is string => value != null)))
   const missingAudioHashes = audioHashes.filter((value) => value === null).length
   if (anyTranscriptionRun && knownAudioHashes.length > 1) {

@@ -2,26 +2,26 @@
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import io
 from pathlib import Path
-import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def make_wav(seconds=1.5, byte_rate=8000):
-    data_size = int(byte_rate * seconds)
-    fmt = struct.pack("<HHIIHH", 1, 1, byte_rate, byte_rate, 2, 16)
-    body = b"\x00" * data_size
-
-    def chunk(tag, payload):
-        return tag + struct.pack("<I", len(payload)) + payload
-
-    return b"RIFF" + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(body)) + b"WAVE" + chunk(b"fmt ", fmt) + chunk(b"data", body)
+def make_wav(seconds=1.5, sample_rate=8000):
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b"\x00" * (int(sample_rate * seconds) * 2))
+    return buffer.getvalue()
 
 
 INPUT_WAV = make_wav(1.5)
