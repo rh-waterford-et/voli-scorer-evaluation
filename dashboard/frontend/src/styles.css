@@ -362,6 +362,11 @@ textarea {
   color: var(--text);
 }
 
+.form-grid input[type='file'] {
+  height: 34px;
+  padding-block: 6px;
+}
+
 textarea {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
