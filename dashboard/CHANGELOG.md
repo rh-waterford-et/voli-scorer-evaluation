@@ -10,12 +10,15 @@ when reporting issues, include it.
 
 ## Unreleased
 
+## 0.1.14 — 2026-11-09
+
 - Support text embeddings with non-streaming response validation and end-to-end latency.
 - Support image generation with response validation and size checks in Compare.
 - Support image editing with an uploaded input image and comparison checks.
 - Support batch transcription with an audio upload, optional language and prompt, and comparison checks.
 - Support streaming transcription with an audio upload, first-text latency and comparison checks.
 - Add endpoint-specific scorer caveats for image and transcription workloads.
+- File input alignment fix.
 
 ## 0.1.13 — 2026-10-23
 
