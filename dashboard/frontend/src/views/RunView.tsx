@@ -55,7 +55,7 @@ function RoutingTable({ run }: { run: ScriptRun }) {
   )
 }
 
-function FullMetricsTable({ run }: { run: ScriptRun }) {
+function FullMetricsTable({ run, isTranscription }: { run: ScriptRun; isTranscription: boolean }) {
   const keys = METRIC_ORDER.filter((key) => (run.metrics?.[key]?.n ?? 0) > 0)
   if (!keys.length) return <div className="muted">No latency samples.</div>
   return (
@@ -72,7 +72,7 @@ function FullMetricsTable({ run }: { run: ScriptRun }) {
       <tbody>
         {keys.map((key) => (
           <tr key={key}>
-            <td>{METRIC_LABELS[key] ?? key}</td>
+            <td>{isTranscription && key === 'ttft_ms' ? 'First transcript text' : (METRIC_LABELS[key] ?? key)}</td>
             <td className="num">{run.metrics[key].n}</td>
             <td className="num">{fmtMs(run.metrics[key].mean)}</td>
             <td className="num">{fmtMs(run.metrics[key].p50)}</td>
@@ -107,7 +107,7 @@ function SessionSummary({ run }: { run: ScriptRun }) {
   )
 }
 
-function RequestsTable({ run }: { run: ScriptRun }) {
+function RequestsTable({ run, isTranscription }: { run: ScriptRun; isTranscription: boolean }) {
   const requests = run.results ?? []
   if (!requests.length) return <div className="muted">No per-request details stored.</div>
   const columns: Column<RequestResult>[] = [
@@ -142,7 +142,7 @@ function RequestsTable({ run }: { run: ScriptRun }) {
     columns.splice(3, 0, { key: 'ttfa', label: 'TTFA ms', title: 'Time to first audio event, ms — client-observed', align: 'right', sort: (r) => r.ttfa_ms ?? null, render: (r) => fmtMs(r.ttfa_ms) })
   }
   if (requests.some((r) => r.ttft_ms != null)) {
-    columns.splice(3, 0, { key: 'ttft', label: 'TTFT ms', title: 'Time to first text/reasoning event, ms — client-observed', align: 'right', sort: (r) => r.ttft_ms ?? null, render: (r) => fmtMs(r.ttft_ms) })
+    columns.splice(3, 0, { key: 'ttft', label: isTranscription ? 'First text ms' : 'TTFT ms', title: 'Time to first text, ms — client-observed', align: 'right', sort: (r) => r.ttft_ms ?? null, render: (r) => fmtMs(r.ttft_ms) })
   }
   if (requests.some((r) => r.embedding_dimensions != null)) {
     columns.splice(3, 0, { key: 'dimensions', label: 'Dimensions', align: 'right', sort: (r) => r.embedding_dimensions ?? null, render: (r) => fmtInt(r.embedding_dimensions) })
@@ -223,11 +223,11 @@ function RequestsTable({ run }: { run: ScriptRun }) {
   )
 }
 
-function RunDetailPanel({ run }: { run: ScriptRun }) {
+function RunDetailPanel({ run, isTranscription }: { run: ScriptRun; isTranscription: boolean }) {
   return (
     <div className="run-detail">
       <h3>Latency metrics</h3>
-      <FullMetricsTable run={run} />
+      <FullMetricsTable run={run} isTranscription={isTranscription} />
       <h3>Routing</h3>
       <RoutingTable run={run} />
       {run.epp_scores && (
@@ -243,7 +243,7 @@ function RunDetailPanel({ run }: { run: ScriptRun }) {
       )}
       <SessionSummary run={run} />
       <h3>Requests</h3>
-      <RequestsTable run={run} />
+      <RequestsTable run={run} isTranscription={isTranscription} />
     </div>
   )
 }
@@ -355,6 +355,8 @@ export default function RunView() {
   )
   const hasAudio = runs.some((run) => (run.metrics?.ttfa_ms?.n ?? 0) > 0)
   const hasText = runs.some((run) => (run.metrics?.ttft_ms?.n ?? 0) > 0)
+  const isTranscription = (detail?.results?.endpoint ?? detail?.params?.endpoint ?? '').includes('/v1/audio/transcriptions')
+  const metricLabel = (key: string) => isTranscription && key === 'ttft_ms' ? 'First transcript text' : (METRIC_LABELS[key] ?? key)
 
   useEffect(() => {
     if (!metricKeys.length) return
@@ -426,10 +428,10 @@ export default function RunView() {
   }
   if (hasText) {
     columns.push(
-      { key: 'ttft_p50', label: 'TTFT p50', title: 'Time to first text/reasoning event, ms — client-observed (median)', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p50')) },
-      { key: 'ttft_p99', label: 'TTFT p99', title: 'Time to first text/reasoning event, ms — client-observed (tail)', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p99')) },
-      { key: 'tpot', label: 'TPOT~ mean', title: 'Estimated time per output token, ms — a streamed chunk can contain several tokens', align: 'right', sort: (r) => metricOf(r, 'tpot_estimate_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'tpot_estimate_ms', 'mean')) },
+      { key: 'ttft_p50', label: isTranscription ? 'First text p50' : 'TTFT p50', title: 'Time to first text, ms — client-observed', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p50'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p50')) },
+      { key: 'ttft_p99', label: isTranscription ? 'First text p99' : 'TTFT p99', title: 'Time to first text, ms — client-observed', align: 'right', sort: (r) => metricOf(r, 'ttft_ms', 'p99'), render: (r) => fmtMs(metricOf(r, 'ttft_ms', 'p99')) },
     )
+    if (!isTranscription) columns.push({ key: 'tpot', label: 'TPOT~ mean', title: 'Estimated time per output token, ms', align: 'right', sort: (r) => metricOf(r, 'tpot_estimate_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'tpot_estimate_ms', 'mean')) })
   }
   columns.push(
     { key: 'e2e_mean', label: 'E2E mean', title: 'End-to-end request duration, ms', align: 'right', sort: (r) => metricOf(r, 'e2e_ms', 'mean'), render: (r) => fmtMs(metricOf(r, 'e2e_ms', 'mean')) },
@@ -451,10 +453,11 @@ export default function RunView() {
         (!('image_content' in request) || request.image_content === 'b64-validated') &&
         (!('transcript_chars' in request) || !request.transcript_empty),
       )
-      .map((request) =>
-        histoMetric === 'e2e_ms' ? request.e2e_ms : (request as any)[histoMetric] ?? null,
-      )
-      .filter((value): value is number => value != null) ?? []
+      .flatMap((request) => {
+        const value = (request as any)[histoMetric]
+        return Array.isArray(value) ? value : [value]
+      })
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) ?? []
 
   const cancel = async () => {
     try {
@@ -503,6 +506,7 @@ export default function RunView() {
               {' '}· model <code>{detail.results.model ?? '—'}</code>
               {' '}· endpoint <code>{detail.results.endpoint ?? params?.endpoint ?? '—'}</code>
               {' '}· modalities <code>{(detail.results.modalities ?? []).join(',') || '—'}</code>
+              {isTranscription && <> · transcription <code>{(detail.results.transcription_stream ?? params?.transcription_stream) == null ? 'unknown' : (detail.results.transcription_stream ?? params?.transcription_stream) ? 'streaming' : 'batch'}</code></>}
             </>
           )}
           {params && (
@@ -592,7 +596,7 @@ export default function RunView() {
               rows={runs}
               rowKey={(run) => run.run_id}
               initialSortKey="e2e_p50"
-              expand={(run) => <RunDetailPanel run={run} />}
+              expand={(run) => <RunDetailPanel run={run} isTranscription={isTranscription} />}
             />
           </div>
 
@@ -604,7 +608,7 @@ export default function RunView() {
                 <HelpHint text="Which latency metric to chart. Bars show p50 and p99 per profile and load." />
                 <select value={chartMetric} onChange={(e) => setChartMetric(e.target.value)}>
                   {metricKeys.map((key) => (
-                    <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>
+                    <option key={key} value={key}>{metricLabel(key)}</option>
                   ))}
                 </select>
               </label>
@@ -631,7 +635,7 @@ export default function RunView() {
                 <HelpHint text="Which per-request latency to bucket. Counts how many requests fell into each latency range." />
                 <select value={histoMetric} onChange={(e) => setHistoMetric(e.target.value)}>
                   {metricKeys.map((key) => (
-                    <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>
+                    <option key={key} value={key}>{metricLabel(key)}</option>
                   ))}
                 </select>
               </label>

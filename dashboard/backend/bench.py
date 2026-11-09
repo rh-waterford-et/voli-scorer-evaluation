@@ -41,6 +41,7 @@ class RunParams(BaseModel):
     audio_format: Optional[str] = None
     image_size: Optional[str] = None  # image endpoints; None = server default
     language: Optional[str] = None  # /v1/audio/transcriptions; None = model default
+    transcription_stream: bool = False
     # Server-side path to the uploaded run input file (image edit or
     # transcription audio; set by the backend when a run is created with an
     # upload; not a user-facing form field).
@@ -71,6 +72,8 @@ class RunParams(BaseModel):
 
     @model_validator(mode="after")
     def _check(self):
+        if self.transcription_stream and self.endpoint != "/v1/audio/transcriptions":
+            raise ValueError("transcription_stream applies only to transcription runs")
         if self.endpoint == "/v1/chat/completions" and not (self.tokenizer or "").strip():
             raise ValueError("tokenizer is required for /v1/chat/completions runs")
         if self.session_length == 1:
@@ -130,6 +133,8 @@ class RunParams(BaseModel):
             argv += ["--audio", self.input_file]
         if self.language and self.endpoint == "/v1/audio/transcriptions":
             argv += ["--language", self.language.strip()]
+        if self.transcription_stream:
+            argv.append("--transcription-stream")
         if self.voice and self.endpoint in ("/v1/audio/speech", "/v1/chat/completions"):
             argv += ["--voice", self.voice]
         if self.audio_format and self.endpoint in ("/v1/audio/speech", "/v1/chat/completions"):

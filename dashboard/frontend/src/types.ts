@@ -151,6 +151,7 @@ export interface RunParams {
   audio_format?: string | null
   image_size?: string | null
   language?: string | null
+  transcription_stream?: boolean | null
   input_file?: string | null
   input_info?: InputFileInfo | null
   tokenizer?: string | null
@@ -181,6 +182,7 @@ export interface ResultsDoc {
   transcribe_audio?: InputFileInfo | null
   transcription_hints?: string[] | null
   language?: string | null
+  transcription_stream?: boolean | null
   runs: ScriptRun[]
 }
 

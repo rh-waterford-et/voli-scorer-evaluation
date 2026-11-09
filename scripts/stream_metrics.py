@@ -107,6 +107,30 @@ def iter_sse_events(response):
         yield "\n".join(data_lines), time.perf_counter()
 
 
+def iter_transcription_events(response):
+    """Yield complete SSE events, including their optional event name."""
+    data_lines = []
+    event_name = None
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="strict").rstrip("\r\n")
+        if not line:
+            if data_lines:
+                yield event_name, "\n".join(data_lines), time.perf_counter()
+            data_lines, event_name = [], None
+        elif line.startswith(":"):
+            continue
+        else:
+            field, sep, value = line.partition(":")
+            if sep and value.startswith(" "):
+                value = value[1:]
+            if field == "data":
+                data_lines.append(value)
+            elif field == "event":
+                event_name = value
+    # An incomplete last event is not dispatched; a missing terminal event
+    # causes the request to fail rather than counting truncated output.
+
+
 def extract_text(value):
     if isinstance(value, str):
         return value
@@ -341,6 +365,8 @@ def multipart_body(args, prompt, modalities):
         part_name = "file"
         content_type = AUDIO_CONTENT_TYPES.get(media["format"], "application/octet-stream")
         fields = {"model": args.model, "response_format": "json"}
+        if getattr(args, "transcription_stream", False):
+            fields["stream"] = "true"
         # The prompt is an optional recognition hint: sent only when
         # explicitly supplied, never the script default.
         if prompt:
@@ -464,7 +490,7 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
     body, body_content_type = request_body(args, prompt, modalities)
     headers = {
         "Content-Type": body_content_type,
-        "Accept": "application/json" if args.endpoint in json_endpoints else "text/event-stream",
+        "Accept": "text/event-stream" if getattr(args, "transcription_stream", False) else ("application/json" if args.endpoint in json_endpoints else "text/event-stream"),
         "User-Agent": marker,
         "X-Request-Id": sent_id,
     }
@@ -506,6 +532,64 @@ def run_request(index, args, prompt, modalities, run_id, session_token=None):
                 return result
             if args.endpoint == "/v1/audio/transcriptions":
                 media_type = content_type.split(";", 1)[0].strip().lower()
+                if getattr(args, "transcription_stream", False):
+                    if media_type != "text/event-stream":
+                        raise RuntimeError(f"expected transcription SSE, got {content_type!r}")
+                    result["transcript_format"] = "sse"
+                    saw_transcription = False
+                    for event_name, data, event_time in iter_transcription_events(response):
+                        if data == "[DONE]":
+                            saw_done = True
+                            continue
+                        try:
+                            event = json.loads(data)
+                        except json.JSONDecodeError as error:
+                            raise RuntimeError(f"invalid transcription SSE JSON: {data[:160]!r}") from error
+                        if not isinstance(event, dict):
+                            raise RuntimeError("invalid transcription SSE event")
+                        event_type = event.get("type") or event_name
+                        if event.get("error") or event_type == "error":
+                            raise RuntimeError(f"server error: {str(event.get('error') or event.get('message') or event)[:500]}")
+                        if isinstance(event.get("usage"), dict):
+                            result["usage"] = event["usage"]
+                        piece = ""
+                        if event_type == "transcript.text.delta":
+                            saw_transcription = True
+                            piece = event.get("delta")
+                            if not isinstance(piece, str):
+                                raise RuntimeError("invalid transcription delta")
+                        elif event_type == "transcript.text.done":
+                            saw_transcription = True
+                            final = event.get("text")
+                            if not isinstance(final, str):
+                                raise RuntimeError("invalid transcription final text")
+                            if final and not text_parts:
+                                result["text_times"].append(event_time)
+                            text_parts[:] = [final]
+                            saw_done = True
+                        elif isinstance(event.get("choices"), list):
+                            saw_transcription = True
+                            for choice in event["choices"]:
+                                if not isinstance(choice, dict) or not isinstance(choice.get("delta"), dict):
+                                    raise RuntimeError("invalid transcription choice")
+                                value = choice["delta"].get("content")
+                                if value is not None and not isinstance(value, str):
+                                    raise RuntimeError("invalid transcription choice text")
+                                piece += value or ""
+                            # A vLLM finish_reason may occur per audio segment;
+                            # only [DONE] closes the complete stream.
+                        if piece:
+                            result["text_times"].append(event_time)
+                            text_parts.append(piece)
+                    if not saw_done:
+                        raise RuntimeError("transcription stream closed without a completion event")
+                    if not saw_transcription:
+                        raise RuntimeError("transcription stream contained no recognized transcription events")
+                    transcript = "".join(text_parts)
+                    result["transcript_chars"] = len(transcript)
+                    result["transcript_empty"] = not transcript.strip()
+                    result["status"] = "ok"
+                    return result
                 if media_type == "application/json":
                     try:
                         document = json.loads(response.read())
@@ -1205,7 +1289,15 @@ def print_run_report(run, args, modalities):
         else "Latency (valid responses)"
     )
     print_section(latency_title)
-    if args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
+    if args.endpoint == "/v1/audio/transcriptions" and args.transcription_stream:
+        print_latency_table([
+            ("First transcript text", samples["ttft_ms"], "ms"),
+            ("Transcript chunk gap", samples["text_gap_ms"], "ms"),
+            ("End-to-end", samples["e2e_ms"], "ms"),
+        ])
+        if run["empty_transcripts"]:
+            print(f"  {run['empty_transcripts']} empty transcript(s) excluded from latency.")
+    elif args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
         print_latency_table([("End-to-end", samples["e2e_ms"], "ms")])
         if args.endpoint in IMAGE_ENDPOINTS and run["unverified_responses"]:
             print(
@@ -1261,7 +1353,12 @@ def print_run_report(run, args, modalities):
             if not pod_results:
                 continue
             print(f"  {pod}")
-            if args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
+            if args.endpoint == "/v1/audio/transcriptions" and args.transcription_stream:
+                print_latency_table([
+                    ("First transcript text", [r["ttft_ms"] for r in pod_results if r["ttft_ms"] is not None], "ms"),
+                    ("End-to-end", [r["e2e_ms"] for r in pod_results], "ms"),
+                ])
+            elif args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
                 print_latency_table([("End-to-end", [r["e2e_ms"] for r in pod_results], "ms")])
             elif args.endpoint == "/v1/audio/speech":
                 print_latency_table([
@@ -1280,9 +1377,11 @@ def print_run_report(run, args, modalities):
     if args.endpoint == "/v1/embeddings":
         print("  Embeddings are non-streaming; latency covers the complete response.")
     elif args.endpoint == "/v1/audio/transcriptions":
-        print("  Transcription is non-streaming; end-to-end latency covers the HTTP request")
+        print("  Transcription output is " + ("streaming" if args.transcription_stream else "non-streaming") + "; latency covers the HTTP request")
         print("  (including the multipart upload) and response validation, but not local")
         print("  multipart construction.")
+        if args.transcription_stream:
+            print("  First text and chunk gaps are client-observed; input is a complete file, not live audio.")
         print("  The prompt is an optional recognition hint and is sent only when explicitly")
         print("  provided. The input audio is described by a header check only (format label")
         print("  and WAV duration when parseable); unrecognized formats are sent as-is.")
@@ -1355,6 +1454,8 @@ def print_suite_report(runs, args, modalities):
             f"failed {run['failed_responses']}  |  {run['duration_seconds']:.1f} s"
         )
         if args.endpoint in ("/v1/embeddings",) + IMAGE_ENDPOINTS + ("/v1/audio/transcriptions",):
+            if args.endpoint == "/v1/audio/transcriptions" and args.transcription_stream:
+                print(f"     First transcript p50/p99 {suite_value(run, 'ttft_ms', 'p50')}/{suite_value(run, 'ttft_ms', 'p99')} ms")
             print(f"     E2E p50/p99 {suite_value(run, 'e2e_ms', 'p50')}/{suite_value(run, 'e2e_ms', 'p99')} ms")
         elif args.endpoint == "/v1/audio/speech":
             print(
@@ -1387,9 +1488,11 @@ def print_suite_report(runs, args, modalities):
     if args.endpoint == "/v1/embeddings":
         print("  Embeddings are non-streaming; latency covers the complete response.")
     elif args.endpoint == "/v1/audio/transcriptions":
-        print("  Transcription is non-streaming; latency is reported only for responses with a")
+        print("  Transcription output is " + ("streaming" if args.transcription_stream else "non-streaming") + "; latency is reported only for responses with a")
         print("  nonempty transcript (see the single-run report for details). All requests reuse")
         print("  the same input audio; server-side caching may warm up.")
+        if args.transcription_stream:
+            print("  First transcript latency includes file upload; this is not live audio input.")
     elif args.endpoint == "/v1/images/edits":
         print("  Image edits are non-streaming; latency is reported only for responses with")
         print("  content-verified PNG output (see the single-run report for details). All edit")
@@ -1432,6 +1535,7 @@ def main():
     parser.add_argument("--image", type=Path, help="Path to the input image for /v1/images/edits (required for that endpoint). The same image is sent with every request.")
     parser.add_argument("--audio", type=Path, help="Path to the input audio file for /v1/audio/transcriptions (required for that endpoint). The same audio is sent with every request.")
     parser.add_argument("--language", help="Optional language for /v1/audio/transcriptions (e.g. en); omitted means the model default, often auto-detection.")
+    parser.add_argument("--transcription-stream", action="store_true", help="Request streaming transcription output for a complete uploaded audio file.")
     parser.add_argument("--no-usage", action="store_true", help="Omit stream_options.include_usage.")
     parser.add_argument("--iterations", "-n", type=int, default=10, help="Total requests for a single run or default suite run.")
     parser.add_argument("--concurrency", "-c", type=int, default=1, help="Maximum simultaneous requests per run.")
@@ -1495,6 +1599,8 @@ def main():
         parser.error("--audio is required for /v1/audio/transcriptions runs")
     if args.language and args.endpoint != "/v1/audio/transcriptions":
         parser.error("--language applies only to /v1/audio/transcriptions runs")
+    if args.transcription_stream and args.endpoint != "/v1/audio/transcriptions":
+        parser.error("--transcription-stream applies only to /v1/audio/transcriptions runs")
     args.edit_image = load_edit_image(args.image) if args.endpoint == "/v1/images/edits" else None
     args.transcribe_audio = (
         load_transcribe_audio(args.audio) if args.endpoint == "/v1/audio/transcriptions" else None
@@ -1573,6 +1679,7 @@ def main():
                 "transcribe_audio": public_edit_image(args.transcribe_audio),
                 "language": args.language,
                 "transcription_hints": [prompt for prompt in prompts if prompt],
+                "transcription_stream": args.transcription_stream,
             })
         args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
         print(f"\nSaved detailed JSON: {args.output_json}")

@@ -135,10 +135,22 @@ Then open <http://localhost:8765>.
   with it. Reusing the same input can warm server caches; edit latency includes
   the upload and response processing. Compare blocks rankings for different
   requested image sizes or edit inputs and warns when these are unknown.
-- `/v1/audio/transcriptions` uploads one audio file and reports batch
-  end-to-end latency. Empty transcripts are counted separately and excluded
-  from latency statistics and rankings. Language and prompt hints are optional;
-  Compare checks the input audio, language and prompt.
+- `/v1/audio/transcriptions` uploads one complete audio file. Batch reports
+  end-to-end latency; streaming output also reports time to first transcript
+  text and text chunk gaps. Timings include the upload, not multipart
+  construction; this is not live microphone input. Empty transcripts are
+  excluded from latency statistics. Compare checks input, language, prompt and
+  streaming mode. Streaming supports transcript-text events and vLLM's
+  chat-shaped transcription events; validate the target server and gateway.
+  A single returned text event does not establish incremental delivery.
+
+  CLI example (add `--epp-scores` when EPP decision logging is configured):
+
+  ```bash
+  python scripts/stream_metrics.py --endpoint /v1/audio/transcriptions \
+    --url http://gateway:8000 --model MODEL --audio clip.wav \
+    --transcription-stream --profile PROFILE --run 20x2 --output-json result.json
+  ```
 
 ### Frontend dev mode
 

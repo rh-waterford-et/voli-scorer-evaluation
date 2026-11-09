@@ -76,12 +76,12 @@ def parse_multipart(request):
     return fields, files
 
 
-def run_with(body, audio=None, prompt=None, language=None, content_type="application/json"):
+def run_with(body, audio=None, prompt=None, language=None, content_type="application/json", stream=False):
     wav = audio if audio is not None else make_wav(1.0)
     args = argparse.Namespace(
         endpoint="/v1/audio/transcriptions", model="whisper", url="http://localhost:8000",
         api_key=None, profile=None, session_length=0, timeout=5, size=None,
-        language=language,
+        language=language, transcription_stream=stream,
         transcribe_audio={
             "name": "clip.wav", "bytes": len(wav), "sha256": hashlib.sha256(wav).hexdigest(),
             "format": "wav", "duration_seconds": 1.0, "data": wav,
@@ -95,6 +95,50 @@ def run_with(body, audio=None, prompt=None, language=None, content_type="applica
 
 
 class TranscriptionTests(unittest.TestCase):
+    def test_streaming_formats_and_request(self):
+        streams = [
+            b'event: transcript.text.delta\ndata: {"delta":"hello"}\n\n'
+            b'data: {"type":"transcript.text.delta","delta":" world"}\n\n'
+            b'data: {"type":"transcript.text.done","text":"hello world"}\n\n',
+            b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'
+            b'data: {"choices":[{"delta":{"content":" world"}}]}\n\n'
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+            b'data: [DONE]\n\n',
+        ]
+        for body in streams:
+            with self.subTest(body=body):
+                result, request = run_with(body, content_type="text/event-stream", stream=True)
+                fields, _ = parse_multipart(request)
+                self.assertEqual(fields["stream"], "true")
+                self.assertEqual(request.get_header("Accept"), "text/event-stream")
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["text"], "hello world")
+                self.assertEqual(result["transcript_chars"], 11)
+                self.assertIsNotNone(result["ttft_ms"])
+                self.assertEqual(len(result["text_gap_ms"]), 1)
+                self.assertTrue(metrics.is_latency_eligible(result))
+
+    def test_streaming_empty_truncated_and_errors(self):
+        empty = b'data: {"type":"transcript.text.done","text":""}\n\n'
+        result, _ = run_with(empty, content_type="text/event-stream", stream=True)
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["transcript_empty"])
+        self.assertFalse(metrics.is_latency_eligible(result))
+        cases = [
+            b'data: {"type":"transcript.text.delta","delta":"partial"}\n\n',
+            b'data: {"type":"transcript.text.done","text":"partial"}',
+            b'data: {"type":"transcript.text.delta","delta":"partial"}\n\nevent: error\ndata: {"message":"bad"}\n\n',
+            b'data: nope\n\n',
+            b'data: [DONE]\n\n',
+        ]
+        for body in cases:
+            with self.subTest(body=body):
+                result, _ = run_with(body, content_type="text/event-stream", stream=True)
+                self.assertEqual(result["status"], "failed")
+                self.assertFalse(metrics.is_latency_eligible(result))
+        result, _ = run_with(transcript_response("not streaming"), stream=True)
+        self.assertEqual(result["status"], "failed")
+
     def test_multipart_request_shape(self):
         wav = make_wav(3.0)
         result, request = run_with(
@@ -312,6 +356,35 @@ class TranscriptionTests(unittest.TestCase):
             checked = dashboard_app.profiles_check("/v1/audio/transcriptions")
         fetch.assert_called_once()
         self.assertEqual(checked["cluster_access"], "unavailable")
+
+    def test_stream_mode_preserved_in_single_suite_and_dashboard(self):
+        from store import RunStore
+        with tempfile.TemporaryDirectory() as temp:
+            audio = Path(temp) / "clip.wav"
+            audio.write_bytes(make_wav(0.2))
+            output = Path(temp) / "result.json"
+            body = b'data: {"type":"transcript.text.delta","delta":"hello"}\n\ndata: {"type":"transcript.text.done","text":"hello"}\n\n'
+            for loads in (["--run", "1x1"], ["--run", "1x1", "--run", "2x1"]):
+                argv = ["stream_metrics.py", "--endpoint", "/v1/audio/transcriptions", "--audio", str(audio),
+                        "--transcription-stream", "--no-backend-lookup", "--output-json", str(output), *loads]
+                with patch.object(sys, "argv", argv), patch.object(
+                    metrics.urllib.request, "urlopen", side_effect=lambda *a, **k: Response(body, "text/event-stream")
+                ), contextlib.redirect_stdout(io.StringIO()):
+                    metrics.main()
+                normalized = normalize_output(json.loads(output.read_text()))
+                self.assertTrue(normalized["transcription_stream"])
+                self.assertTrue(all(r["metrics"]["ttft_ms"]["n"] == r["iterations"] for r in normalized["runs"]))
+            store = RunStore(Path(temp))
+            result = store.run_dir("mode") / "result.json"
+            result.parent.mkdir()
+            result.write_text(output.read_text())
+            meta = {"id": "mode", "params": {"endpoint": "/v1/audio/transcriptions"},
+                    "profiles": [{"result_file": "result.json"}]}
+            self.assertTrue(store.load_results(meta)["transcription_stream"])
+        params = RunParams(endpoint="/v1/audio/transcriptions", profiles=["default"], transcription_stream=True)
+        self.assertIn("--transcription-stream", params.common_argv(Path("out.json"), None))
+        with self.assertRaises(ValueError):
+            RunParams(endpoint="/v1/audio/speech", profiles=["default"], transcription_stream=True)
 
 
 class CreateRunUploadTests(unittest.TestCase):

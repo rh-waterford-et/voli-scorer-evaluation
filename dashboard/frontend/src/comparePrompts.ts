@@ -5,6 +5,16 @@ export function isTranscription(detail: RunDetail): boolean {
     (detail.results?.endpoint ?? '').includes('/v1/audio/transcriptions')
 }
 
+export function transcriptionModeState(details: RunDetail[]): { mismatch: boolean; unknown: boolean } {
+  const modes = details.filter(isTranscription).map((detail) =>
+    detail.results?.transcription_stream ?? detail.params?.transcription_stream ?? null,
+  )
+  return {
+    mismatch: modes.includes(true) && modes.includes(false),
+    unknown: modes.includes(null),
+  }
+}
+
 export function promptOf(detail: RunDetail): string | null {
   if (detail.params) {
     const text = (detail.params.prompts_text ?? '').trim()

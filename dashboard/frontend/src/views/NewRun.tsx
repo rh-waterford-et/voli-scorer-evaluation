@@ -91,6 +91,7 @@ export default function NewRun() {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const [language, setLanguage] = useState('')
+  const [transcriptionStream, setTranscriptionStream] = useState(false)
 
   const [sessionLength, setSessionLength] = useState(0)
   const [sessionHeader, setSessionHeader] = useState('x-session-token')
@@ -213,6 +214,7 @@ export default function NewRun() {
     if (endpoint === '/v1/audio/transcriptions' && language.trim()) {
       params.language = language.trim()
     }
+    if (endpoint === '/v1/audio/transcriptions') params.transcription_stream = transcriptionStream
     if ((endpoint === '/v1/audio/speech' || endpoint === '/v1/chat/completions') && voice.trim()) params.voice = voice.trim()
     if ((endpoint === '/v1/audio/speech' || endpoint === '/v1/chat/completions') && audioFormat.trim()) params.audio_format = audioFormat.trim()
     if (sessionLength >= 2) {
@@ -304,7 +306,7 @@ export default function NewRun() {
           <div>
             <label>
               Endpoint
-              <HelpHint text="Choose TTS, chat, text embeddings, image generation, image editing, or audio transcription. Chat requires a tokenizer; embeddings, images and transcriptions use non-streaming responses and report end-to-end latency. Image content is verified only for PNG base64 responses; edits and transcriptions need an uploaded input file." />
+              <HelpHint text="Choose TTS, chat, text embeddings, image generation, image editing, or audio transcription. Chat requires a tokenizer. Transcription can stream its response; edits and transcriptions need an uploaded file." />
             </label>
             <select value={endpoint} onChange={(e) => {
               const next = e.target.value as typeof endpoint
@@ -561,6 +563,24 @@ export default function NewRun() {
             <input type="file" accept="audio/*"
               onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} />
           </div>
+          )}
+          {endpoint === '/v1/audio/transcriptions' && (
+          <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+            <legend style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 4 }}>
+              Transcription output
+              <HelpHint text="Upload a complete audio file and measure time to first transcript text and chunk gaps. This is not live microphone input. First-text timing includes upload." />
+            </legend>
+            <div style={{ display: 'flex', gap: 20 }}>
+              <label className="check">
+                <input type="radio" name="transcription-output" checked={!transcriptionStream} onChange={() => setTranscriptionStream(false)} />
+                Batch
+              </label>
+              <label className="check">
+                <input type="radio" name="transcription-output" checked={transcriptionStream} onChange={() => setTranscriptionStream(true)} />
+                Streaming
+              </label>
+            </div>
+          </fieldset>
           )}
           {endpoint === '/v1/audio/transcriptions' && (
           <div>

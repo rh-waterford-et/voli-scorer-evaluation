@@ -63,6 +63,7 @@ def normalize_output(document) -> Optional[dict]:
             "transcribe_audio": document.get("transcribe_audio"),
             "transcription_hints": document.get("transcription_hints"),
             "language": document.get("language"),
+            "transcription_stream": document.get("transcription_stream"),
             "runs": document["runs"],
         }
     if "profile" in document and "metrics" in document:
@@ -73,6 +74,7 @@ def normalize_output(document) -> Optional[dict]:
             "transcribe_audio": document.get("transcribe_audio"),
             "transcription_hints": document.get("transcription_hints"),
             "language": document.get("language"),
+            "transcription_stream": document.get("transcription_stream"),
             "runs": [document],
         }
     return None
@@ -206,7 +208,7 @@ class RunStore:
     def load_results(self, meta: dict) -> Optional[dict]:
         """Merge every completed attempt's result file into one document."""
         runs = []
-        model = endpoint = image_size = edit_image = transcribe_audio = language = transcription_hints = None
+        model = endpoint = image_size = edit_image = transcribe_audio = language = transcription_hints = transcription_stream = None
         modalities: list = []
         for attempt in meta.get("profiles", []):
             relative = attempt.get("result_file")
@@ -230,6 +232,8 @@ class RunStore:
             if transcription_hints is None:
                 transcription_hints = normalized.get("transcription_hints")
             language = language or normalized.get("language")
+            if transcription_stream is None:
+                transcription_stream = normalized.get("transcription_stream")
             modalities = modalities or normalized["modalities"] or []
             runs.extend(normalized["runs"])
         if not runs:
@@ -253,10 +257,12 @@ class RunStore:
         elif params.get("endpoint") == "/v1/audio/transcriptions":
             transcribe_audio = transcribe_audio or params.get("input_info")
         language = language or params.get("language")
+        if transcription_stream is None:
+            transcription_stream = params.get("transcription_stream")
         return {"model": model, "endpoint": endpoint, "modalities": modalities,
                 "image_size": image_size, "edit_image": edit_image,
                 "transcribe_audio": transcribe_audio, "transcription_hints": transcription_hints,
-                "language": language, "runs": runs}
+                "language": language, "transcription_stream": transcription_stream, "runs": runs}
 
     def ensure_summary(self, meta: dict) -> Optional[dict]:
         summary = meta.get("summary")

@@ -17,7 +17,7 @@ import { api } from '../api'
 import { useTheme } from '../theme'
 import type { ProfileCheck, ProfilesCheckResponse, RunDetail, ScriptRun } from '../types'
 import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
-import { isTranscription, promptOf } from '../comparePrompts'
+import { isTranscription, promptOf, transcriptionModeState } from '../comparePrompts'
 
 type Stat = 'mean' | 'p50' | 'p99'
 
@@ -248,6 +248,16 @@ export default function Compare() {
     mismatched.push(`image sizes (${knownImageSizes.join(' vs ')})`)
   }
   const comparisonWarnings: string[] = []
+  const transcriptionModes = transcriptionModeState(details)
+  const comparisonMetricLabel = (key: string) => details.length > 0 && details.every(isTranscription) && key === 'ttft_ms'
+    ? 'First transcript text' : (METRIC_LABELS[key] ?? key)
+  if (transcriptionModes.mismatch) {
+    mismatched.push('transcription mode (streaming vs batch)')
+  }
+  if (transcriptionModes.unknown) {
+    comparisonWarnings.push('Some transcription runs have unknown streaming mode; comparison may not be equivalent.')
+    if (details.filter(isTranscription).length > 1) mismatched.push('unknown transcription mode')
+  }
   if (anyImageRun && knownImageSizes.length <= 1 && unknownImageSizes > 0) {
     comparisonWarnings.push(
       `${unknownImageSizes} of the selected image run${unknownImageSizes === 1 ? '' : 's'} ` +
@@ -530,7 +540,7 @@ export default function Compare() {
             <HelpHint text="Which latency metric to compare across the selected profiles." />
             <select value={metric} onChange={(e) => setMetric(e.target.value)}>
               {metricKeys.map((key) => (
-                <option key={key} value={key}>{METRIC_LABELS[key] ?? key}</option>
+                <option key={key} value={key}>{comparisonMetricLabel(key)}</option>
               ))}
             </select>
           </label>
@@ -621,13 +631,13 @@ export default function Compare() {
 
       <div className="panel">
         <h2>
-          {METRIC_LABELS[metric] ?? metric} · {stat} · load {load || '—'}
+          {comparisonMetricLabel(metric)} · {stat} · load {load || '—'}
         </h2>
         <MetricBarChartWrapper
           chartRows={chartRows}
           maxSlots={maxSlots}
           palette={palette}
-          metric={metric}
+          metricLabel={comparisonMetricLabel(metric)}
           stat={stat}
         />
       </div>
@@ -676,18 +686,18 @@ function MetricBarChartWrapper({
   chartRows,
   maxSlots,
   palette,
-  metric,
+  metricLabel,
   stat,
 }: {
   chartRows: Record<string, string | number | null>[]
   maxSlots: number
   palette: string[]
-  metric: string
+  metricLabel: string
   stat: Stat
 }) {
   const { theme } = useTheme()
   const colors = chartColors(theme)
-  const seriesName = `${METRIC_LABELS[metric] ?? metric} ${stat}`
+  const seriesName = `${metricLabel} ${stat}`
   if (!chartRows.length || maxSlots < 1) return <div className="muted">No data.</div>
   return (
     <ResponsiveContainer width="100%" height={340}>

@@ -14,6 +14,7 @@ when reporting issues, include it.
 - Support image generation with response validation and size checks in Compare.
 - Support image editing with an uploaded input image and comparison checks.
 - Support batch transcription with an audio upload, optional language and prompt, and comparison checks.
+- Support streaming transcription with an audio upload, first-text latency and comparison checks.
 - Add endpoint-specific scorer caveats for image and transcription workloads.
 
 ## 0.1.13 — 2026-10-23

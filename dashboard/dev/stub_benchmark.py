@@ -40,6 +40,7 @@ parser.add_argument("--size", default=None)
 parser.add_argument("--image", default=None)
 parser.add_argument("--audio", default=None)
 parser.add_argument("--language", default=None)
+parser.add_argument("--transcription-stream", action="store_true")
 args, _unknown = parser.parse_known_args()
 
 
@@ -102,7 +103,8 @@ for iterations, concurrency in settings:
                 "pod": pod if ok else None,
                 "e2e_ms": e2e_values[index - 1],
                 "ttfa_ms": None if plain else ttfa_values[index - 1],
-                "ttft_ms": None,
+                "ttft_ms": ttfa_values[index - 1] if transcription and args.transcription_stream and ok else None,
+                "text_gap_ms": [80.0, 110.0] if transcription and args.transcription_stream and ok else [],
                 **({"embedding_dimensions": 1024} if embedding and ok else {}),
                 **({
                     "image_content": "b64-validated" if ok else None,
@@ -113,7 +115,7 @@ for iterations, concurrency in settings:
                 **({
                     "transcript_chars": 42 if ok else None,
                     "transcript_empty": False if ok else None,
-                    "transcript_format": "json" if ok else None,
+                    "transcript_format": ("sse" if args.transcription_stream else "json") if ok else None,
                     "text": "stub transcript text" if ok else "",
                 } if transcription else {}),
                 "profile": args.profile,
@@ -137,10 +139,10 @@ for iterations, concurrency in settings:
             "metrics": {
                 "e2e_ms": summary(e2e_values),
                 "ttfa_ms": summary([] if plain else ttfa_values),
-                "ttft_ms": summary([]),
+                "ttft_ms": summary([r["ttft_ms"] for r in results if r["ttft_ms"] is not None]),
                 "ttfo_ms": summary([]),
                 "tpot_estimate_ms": summary([]),
-                "text_gap_ms": summary([]),
+                "text_gap_ms": summary([gap for r in results for gap in r["text_gap_ms"]]),
                 "audio_gap_ms": summary([] if plain else [v / 8 for v in ttfa_values]),
             },
             "results": results,
@@ -186,6 +188,7 @@ if transcription:
         "sha256": hashlib.sha256(audio_data).hexdigest(),
     }
     payload["language"] = args.language
+    payload["transcription_stream"] = args.transcription_stream
 args.output_json.parent.mkdir(parents=True, exist_ok=True)
 args.output_json.write_text(json.dumps(payload, indent=2) + "\n")
 print(f"\nSaved detailed JSON: {args.output_json}", flush=True)
