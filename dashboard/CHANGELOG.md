@@ -10,6 +10,8 @@ when reporting issues, include it.
 
 ## Unreleased
 
+- Require a model name and show endpoint-specific examples when creating a run.
+
 ## 0.1.14 — 2026-11-09
 
 - Support text embeddings with non-streaming response validation and end-to-end latency.

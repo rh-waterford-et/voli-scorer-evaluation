@@ -15,6 +15,15 @@ interface Load {
   concurrency: number
 }
 
+const MODEL_PLACEHOLDERS = {
+  '/v1/audio/speech': 'e.g. qwen3-tts',
+  '/v1/chat/completions': 'e.g. qwen3-omni',
+  '/v1/embeddings': 'e.g. qwen3-embedding',
+  '/v1/images/generations': 'e.g. flux-2',
+  '/v1/images/edits': 'e.g. flux-2',
+  '/v1/audio/transcriptions': 'e.g. nemotron-transcribe',
+}
+
 const DEFAULTS = {
   url: 'http://10.6.62.51:31670',
   namespace: 'vllm-omni-validation',
@@ -56,8 +65,8 @@ export default function NewRun() {
   const [searchParams] = useSearchParams()
 
   const [name, setName] = useState('')
-  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions' | '/v1/embeddings' | '/v1/images/generations' | '/v1/images/edits' | '/v1/audio/transcriptions'>('/v1/audio/speech')
-  const [model, setModel] = useState('qwen3-tts')
+  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions' | '/v1/embeddings' | '/v1/images/generations' | '/v1/images/edits' | '/v1/audio/transcriptions'>('/v1/chat/completions')
+  const [model, setModel] = useState('')
   const [url, setUrl] = useState(DEFAULTS.url)
   const [namespace, setNamespace] = useState(DEFAULTS.namespace)
   const [eppDeployment, setEppDeployment] = useState(DEFAULTS.eppDeployment)
@@ -191,7 +200,7 @@ export default function NewRun() {
   const buildParams = () => {
     const params: Record<string, unknown> = {
       endpoint,
-      model,
+      model: model.trim(),
       url,
       namespace,
       epp_deployment: eppDeployment,
@@ -228,6 +237,7 @@ export default function NewRun() {
   }
 
   const validate = (): string | null => {
+    if (!model.trim()) return 'Enter a model name served by the Gateway.'
     if (!selectedProfiles.size) return 'Select at least one profile.'
     if (!loads.length || loads.some((load) => load.iterations < 1 || load.concurrency < 1)) {
       return 'Every load setting needs iterations and concurrency of at least 1.'
@@ -330,10 +340,11 @@ export default function NewRun() {
           </div>
           <div>
             <label>
-              Model
-              <HelpHint text="Model name sent in each API request. Must match a model the Gateway serves (e.g. qwen3-tts)." />
+              Model (required)
+              <HelpHint text="Model name sent in each API request. Enter the exact name served by the Gateway; the placeholder is only an example." />
             </label>
-            <input type="text" value={model} onChange={(e) => setModel(e.target.value)} />
+            <input type="text" value={model} onChange={(e) => setModel(e.target.value)}
+              placeholder={MODEL_PLACEHOLDERS[endpoint]} />
           </div>
           <div>
             <label>
