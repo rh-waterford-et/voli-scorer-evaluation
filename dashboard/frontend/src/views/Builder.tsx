@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { clearDraft, loadDraft, saveDraft } from '../persist'
 import type {
   BuilderBackup,
   BuilderJob,
@@ -60,9 +61,12 @@ function StepIcon({ status }: { status: string }) {
 }
 
 export default function Builder() {
-  const [namespace, setNamespace] = useState('vllm-omni-validation')
-  const [deployment, setDeployment] = useState('endpoint-picker-epp')
-  const [container, setContainer] = useState('epp')
+  // Cluster-lookup fields are restored from a browser-local draft; a fresh
+  // browser starts empty with placeholders only.
+  const draft = loadDraft('builder') ?? {}
+  const [namespace, setNamespace] = useState(draft.namespace ?? '')
+  const [deployment, setDeployment] = useState(draft.deployment ?? '')
+  const [container, setContainer] = useState(draft.container ?? '')
 
   const [state, setState] = useState<BuilderState | null>(null)
   const [stateError, setStateError] = useState<string | null>(null)
@@ -79,7 +83,7 @@ export default function Builder() {
   const [confirming, setConfirming] = useState(false)
   const [lastBody, setLastBody] = useState<any>(null)
 
-  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(() => loadDraft('builder-job')?.id ?? null)
   const [job, setJob] = useState<BuilderJob | null>(null)
 
   const [backups, setBackups] = useState<BuilderBackup[]>([])
@@ -87,7 +91,15 @@ export default function Builder() {
   const [syncing, setSyncing] = useState(false)
   const [scorerCaveats, setScorerCaveats] = useState<ProfilesCheckResponse['scorers'] | null>(null)
 
+  const clusterFieldsReady = namespace.trim() && deployment.trim() && container.trim()
+
   const loadState = useCallback(async () => {
+    if (!clusterFieldsReady) {
+      // Fresh browser: show a hint instead of failing a cluster read.
+      setState(null)
+      setStateError('Enter the namespace and EPP deployment to load the live configuration.')
+      return
+    }
     setLoading(true)
     setStateError(null)
     try {
@@ -122,6 +134,10 @@ export default function Builder() {
 
   // Type-keyed scorer caveats for the composer (cross-endpoint, worst case).
   useEffect(() => {
+    if (!clusterFieldsReady) {
+      setScorerCaveats(null)
+      return
+    }
     api
       .profileCheck('/v1/audio/speech', {
         namespace,
@@ -130,9 +146,22 @@ export default function Builder() {
       })
       .then((check) => setScorerCaveats(check.scorers))
       .catch(() => setScorerCaveats(null))
+  }, [namespace, deployment, container, clusterFieldsReady])
+
+  // Remember the cluster-lookup fields (draft) and the active job id, so
+  // switching views or reloading does not lose the setup or the live apply.
+  useEffect(() => {
+    saveDraft('builder', { namespace, deployment, container })
   }, [namespace, deployment, container])
 
-  // Poll the running job until it finishes.
+  useEffect(() => {
+    if (jobId) saveDraft('builder-job', { id: jobId })
+    else clearDraft('builder-job')
+  }, [jobId])
+
+  // Poll the running job until it finishes. An unknown job id (backend
+  // restarted or job discarded) clears the re-attachment instead of polling
+  // forever.
   useEffect(() => {
     if (!jobId) return
     let cancelled = false
@@ -140,8 +169,16 @@ export default function Builder() {
       try {
         const current = await api.builderJob(jobId)
         if (!cancelled) setJob(current)
-      } catch {
-        /* keep polling */
+      } catch (cause) {
+        if (/404|not found/i.test(String(cause))) {
+          // The job is gone (e.g. the backend restarted); stop tracking it.
+          clearDraft('builder-job')
+          if (!cancelled) {
+            setJobId(null)
+            setJob(null)
+          }
+        }
+        /* other errors: keep polling */
       }
     }
     tick()
@@ -364,15 +401,15 @@ export default function Builder() {
         <div className="form-grid">
           <div>
             <label>Namespace</label>
-            <input type="text" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+            <input type="text" value={namespace} onChange={(e) => setNamespace(e.target.value)} placeholder="e.g. vllm-omni-validation" />
           </div>
           <div>
             <label>EPP deployment</label>
-            <input type="text" value={deployment} onChange={(e) => setDeployment(e.target.value)} />
+            <input type="text" value={deployment} onChange={(e) => setDeployment(e.target.value)} placeholder="e.g. endpoint-picker-epp" />
           </div>
           <div>
             <label>EPP container</label>
-            <input type="text" value={container} onChange={(e) => setContainer(e.target.value)} />
+            <input type="text" value={container} onChange={(e) => setContainer(e.target.value)} placeholder="e.g. epp" />
           </div>
         </div>
         {stateError && <div className="error-text">{stateError}</div>}
@@ -634,14 +671,23 @@ export default function Builder() {
               </div>
             </div>
           )}
-          {job.status === 'done' && (
+          {job.status !== 'running' && (
             <div className="actions">
-              {job.kind === 'apply' && mode !== 'delete' && draftName && (
+              {job.status === 'done' && job.kind === 'apply' && mode !== 'delete' && draftName && (
                 <Link className="button-link" to={`/new?profile=${encodeURIComponent(draftName)}`}>
                   Test this profile in a new run →
                 </Link>
               )}
-              <button onClick={resetComposer}>Back to profiles</button>
+              {job.status === 'done' && <button onClick={resetComposer}>Back to profiles</button>}
+              <button
+                onClick={() => {
+                  setJobId(null)
+                  setJob(null)
+                }}
+                title="Clear this job panel; the job itself is already finished"
+              >
+                Dismiss
+              </button>
             </div>
           )}
         </div>

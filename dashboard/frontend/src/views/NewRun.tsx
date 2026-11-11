@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import HelpHint from '../components/HelpHint'
+import { loadDraft, saveDraft } from '../persist'
 import type {
   ClusterProfiles,
   ProfileCheck,
@@ -24,11 +25,11 @@ const MODEL_PLACEHOLDERS = {
   '/v1/audio/transcriptions': 'e.g. nemotron-transcribe',
 }
 
-const DEFAULTS = {
-  url: 'http://10.6.62.51:31670',
-  namespace: 'vllm-omni-validation',
-  eppDeployment: 'endpoint-picker-epp',
-  eppContainer: 'epp',
+const PLACEHOLDERS = {
+  url: 'e.g. http://10.6.62.51:31670',
+  namespace: 'e.g. vllm-omni-validation',
+  eppDeployment: 'e.g. endpoint-picker-epp',
+  eppContainer: 'e.g. epp',
 }
 
 function profileSubText(profile: ProfileInfo): string {
@@ -64,13 +65,23 @@ export default function NewRun() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
+  // Durable form state is restored from a browser-local draft; a fresh
+  // browser starts with empty fields and placeholders only.
+  const draft = loadDraft('newrun') ?? {}
   const [name, setName] = useState('')
-  const [endpoint, setEndpoint] = useState<'/v1/audio/speech' | '/v1/chat/completions' | '/v1/embeddings' | '/v1/images/generations' | '/v1/images/edits' | '/v1/audio/transcriptions'>('/v1/chat/completions')
-  const [model, setModel] = useState('')
-  const [url, setUrl] = useState(DEFAULTS.url)
-  const [namespace, setNamespace] = useState(DEFAULTS.namespace)
-  const [eppDeployment, setEppDeployment] = useState(DEFAULTS.eppDeployment)
-  const [eppContainer, setEppContainer] = useState(DEFAULTS.eppContainer)
+  type RunEndpoint =
+    | '/v1/audio/speech'
+    | '/v1/chat/completions'
+    | '/v1/embeddings'
+    | '/v1/images/generations'
+    | '/v1/images/edits'
+    | '/v1/audio/transcriptions'
+  const [endpoint, setEndpoint] = useState<RunEndpoint>(draft.endpoint ?? '/v1/chat/completions')
+  const [model, setModel] = useState(draft.model ?? '')
+  const [url, setUrl] = useState(draft.url ?? '')
+  const [namespace, setNamespace] = useState(draft.namespace ?? '')
+  const [eppDeployment, setEppDeployment] = useState(draft.eppDeployment ?? '')
+  const [eppContainer, setEppContainer] = useState(draft.eppContainer ?? '')
 
   const [profileInfos, setProfileInfos] = useState<ProfileInfo[]>([])
   const [mapInfo, setMapInfo] = useState<{
@@ -84,32 +95,44 @@ export default function NewRun() {
   const [clusterInfo, setClusterInfo] = useState<ClusterProfiles | null>(null)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [profileSearch, setProfileSearch] = useState('')
-  const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(new Set())
+  const [selectedProfiles, setSelectedProfiles] = useState<Set<string>>(
+    new Set(Array.isArray(draft.selectedProfiles) ? (draft.selectedProfiles as string[]) : []),
+  )
 
-  const [loads, setLoads] = useState<Load[]>([{ iterations: 10, concurrency: 1 }])
+  const [loads, setLoads] = useState<Load[]>(
+    Array.isArray(draft.loads) && draft.loads.length ? (draft.loads as Load[]) : [{ iterations: 10, concurrency: 1 }],
+  )
 
-  const [promptMode, setPromptMode] = useState<'single' | 'multi'>('single')
-  const [prompt, setPrompt] = useState('')
-  const [promptsText, setPromptsText] = useState('')
+  const [promptMode, setPromptMode] = useState<'single' | 'multi'>(
+    draft.promptMode === 'multi' ? 'multi' : 'single',
+  )
+  const [prompt, setPrompt] = useState(draft.prompt ?? '')
+  const [promptsText, setPromptsText] = useState(draft.promptsText ?? '')
 
-  const [modalities, setModalities] = useState('text,audio')
-  const [tokenizer, setTokenizer] = useState('')
-  const [voice, setVoice] = useState('')
-  const [audioFormat, setAudioFormat] = useState('')
-  const [imageSize, setImageSize] = useState('')
+  const [modalities, setModalities] = useState(draft.modalities ?? 'text,audio')
+  const [tokenizer, setTokenizer] = useState(draft.tokenizer ?? '')
+  const [voice, setVoice] = useState(draft.voice ?? '')
+  const [audioFormat, setAudioFormat] = useState(draft.audioFormat ?? '')
+  const [imageSize, setImageSize] = useState(draft.imageSize ?? '')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
-  const [language, setLanguage] = useState('')
-  const [transcriptionStream, setTranscriptionStream] = useState(false)
+  const [language, setLanguage] = useState(draft.language ?? '')
+  const [transcriptionStream, setTranscriptionStream] = useState(draft.transcriptionStream === true)
 
-  const [sessionLength, setSessionLength] = useState(0)
-  const [sessionHeader, setSessionHeader] = useState('x-session-token')
+  const [sessionLength, setSessionLength] = useState(
+    typeof draft.sessionLength === 'number' ? draft.sessionLength : 0,
+  )
+  const [sessionHeader, setSessionHeader] = useState(draft.sessionHeader ?? 'x-session-token')
 
-  const [eppScores, setEppScores] = useState(false)
-  const [noBackendLookup, setNoBackendLookup] = useState(false)
-  const [gatewayWait, setGatewayWait] = useState(10)
-  const [eppWait, setEppWait] = useState(5)
-  const [timeoutSeconds, setTimeoutSeconds] = useState(600)
+  const [eppScores, setEppScores] = useState(draft.eppScores === true)
+  const [noBackendLookup, setNoBackendLookup] = useState(draft.noBackendLookup === true)
+  const [gatewayWait, setGatewayWait] = useState(
+    typeof draft.gatewayWait === 'number' ? draft.gatewayWait : 10,
+  )
+  const [eppWait, setEppWait] = useState(typeof draft.eppWait === 'number' ? draft.eppWait : 5)
+  const [timeoutSeconds, setTimeoutSeconds] = useState(
+    typeof draft.timeoutSeconds === 'number' ? draft.timeoutSeconds : 600,
+  )
   const [apiKey, setApiKey] = useState('')
 
   const [preview, setPreview] = useState<string[] | null>(null)
@@ -134,8 +157,13 @@ export default function NewRun() {
 
   // Scorer operability for the chosen endpoint (curated caveats + live
   // prerequisite checks). Debounced: endpoint/namespace changes are cheap,
-  // but the check reads the cluster when oc is available.
+  // but the check reads the cluster when oc is available. Skipped while the
+  // cluster-lookup fields are still empty (fresh browser, placeholders only).
   useEffect(() => {
+    if (!namespace.trim() || !eppDeployment.trim() || !eppContainer.trim()) {
+      setChecks(null)
+      return
+    }
     const timer = setTimeout(() => {
       api
         .profileCheck(endpoint, {
@@ -149,7 +177,49 @@ export default function NewRun() {
     return () => clearTimeout(timer)
   }, [endpoint, namespace, eppDeployment, eppContainer])
 
+  // Persist the durable form state so switching views (or reloading) keeps
+  // the setup. The run name, uploaded files and API key stay ephemeral.
+  useEffect(() => {
+    saveDraft('newrun', {
+      endpoint,
+      model,
+      url,
+      namespace,
+      eppDeployment,
+      eppContainer,
+      selectedProfiles: Array.from(selectedProfiles),
+      loads,
+      promptMode,
+      prompt,
+      promptsText,
+      modalities,
+      tokenizer,
+      voice,
+      audioFormat,
+      imageSize,
+      language,
+      transcriptionStream,
+      sessionLength,
+      sessionHeader,
+      eppScores,
+      noBackendLookup,
+      gatewayWait,
+      eppWait,
+      timeoutSeconds,
+    })
+  }, [
+    endpoint, model, url, namespace, eppDeployment, eppContainer,
+    selectedProfiles, loads, promptMode, prompt, promptsText, modalities,
+    tokenizer, voice, audioFormat, imageSize, language, transcriptionStream,
+    sessionLength, sessionHeader, eppScores, noBackendLookup, gatewayWait,
+    eppWait, timeoutSeconds,
+  ])
+
   const loadFromCluster = async () => {
+    if (!namespace.trim() || !eppDeployment.trim() || !eppContainer.trim()) {
+      setProfileError('Fill in the namespace and EPP deployment/container before loading cluster profiles.')
+      return
+    }
     setLoadingProfiles(true)
     setProfileError(null)
     try {
@@ -238,6 +308,11 @@ export default function NewRun() {
 
   const validate = (): string | null => {
     if (!model.trim()) return 'Enter a model name served by the Gateway.'
+    if (!url.trim()) return 'Enter the gateway URL.'
+    if (!namespace.trim()) return 'Enter the cluster namespace.'
+    if (!eppDeployment.trim() || !eppContainer.trim()) {
+      return 'Enter the EPP deployment and container for cluster lookups.'
+    }
     if (!selectedProfiles.size) return 'Select at least one profile.'
     if (!loads.length || loads.some((load) => load.iterations < 1 || load.concurrency < 1)) {
       return 'Every load setting needs iterations and concurrency of at least 1.'
@@ -349,16 +424,16 @@ export default function NewRun() {
           <div>
             <label>
               Gateway URL
-              <HelpHint text="Address of the inference Gateway. Requests go straight to it — no cluster login is needed for the latency measurements." />
+              <HelpHint text="Address of the inference Gateway. Requests go straight to it — no cluster login is needed for the latency measurements. The placeholder is an example; entries are remembered in this browser." />
             </label>
-            <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} />
+            <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={PLACEHOLDERS.url} />
           </div>
           <div>
             <label>
               Namespace
-              <HelpHint text="Cluster namespace for the read-only oc lookups: pod names, Gateway logs, EPP config. Needs a valid oc login; without it, latency still works but routing shows 'unknown'." />
+              <HelpHint text="Cluster namespace for the read-only oc lookups: pod names, Gateway logs, EPP config. Needs a valid oc login; without it, latency still works but routing shows 'unknown'. The placeholder is an example." />
             </label>
-            <input type="text" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+            <input type="text" value={namespace} onChange={(e) => setNamespace(e.target.value)} placeholder={PLACEHOLDERS.namespace} />
           </div>
         </div>
       </div>
@@ -397,11 +472,11 @@ export default function NewRun() {
           <div>
             <label>
               EPP deployment / container (cluster lookup)
-              <HelpHint text="Where to read the live EPP plugin ConfigMap from when using 'Load from cluster'. Read-only oc get; nothing on the cluster is changed." />
+              <HelpHint text="Where to read the live EPP plugin ConfigMap from when using 'Load from cluster'. Read-only oc get; nothing on the cluster is changed. The placeholders are examples." />
             </label>
             <div style={{ display: 'flex', gap: 8 }}>
-              <input type="text" value={eppDeployment} onChange={(e) => setEppDeployment(e.target.value)} />
-              <input type="text" value={eppContainer} onChange={(e) => setEppContainer(e.target.value)} />
+              <input type="text" value={eppDeployment} onChange={(e) => setEppDeployment(e.target.value)} placeholder={PLACEHOLDERS.eppDeployment} />
+              <input type="text" value={eppContainer} onChange={(e) => setEppContainer(e.target.value)} placeholder={PLACEHOLDERS.eppContainer} />
             </div>
           </div>
           <div style={{ alignSelf: 'end' }}>
