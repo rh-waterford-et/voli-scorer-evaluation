@@ -122,8 +122,14 @@ def evaluate_scorer(entry: dict, endpoint: str, deployment: Optional[dict]) -> d
             if not _component_present(deployment, str(component.get("match") or ""))
         ]
         if missing:
-            statuses.append("broken")
-            reasons.append("missing required components: " + ", ".join(missing))
+            # A component can be absent from the EPP pod yet supplied by an
+            # external service. The data file can mark this check uncertain.
+            missing_status = requirement.get("missing_status", "broken")
+            if missing_status not in STATUS_SEVERITY:
+                missing_status = "unknown"
+            statuses.append(missing_status)
+            reason = requirement.get("missing_reason")
+            reasons.append(str(reason) if reason else "missing required components: " + ", ".join(missing))
 
     severity = _worst([STATUS_SEVERITY.get(status, "ok") for status in statuses])
     status_word = next(

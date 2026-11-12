@@ -39,8 +39,12 @@ caveats per scorer type, plus *requirements* that are
 checked live against the EPP Deployment, such as the latency predictor
 sidecars (`llm-d-latency-predictor-training-server` / `-prediction-server`).
 Requirements are matched against specific container components by name or
-image, so unrelated sidecars cannot satisfy them. When the cluster cannot be
-read, requirements report **unknown**, never *missing*. Severities:
+image, so unrelated sidecars cannot satisfy them. Missing predictor sidecars
+report **unknown**, because training and prediction servers may run as separate
+services; even present containers do not establish readiness or training. When
+the cluster cannot be read, requirements also report **unknown**. The dashboard
+does not detect the deployed router version or prove scorer signals are useful.
+Severities:
 `unsupported`/`not-useful`/`broken` (bad), `limited` (warn), `unknown`.
 Only *bad* severity suppresses Compare winner highlighting; *warn*/*unknown*
 show an informational interpretation note there instead. Re-verify the
