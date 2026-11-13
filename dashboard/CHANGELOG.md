@@ -10,6 +10,8 @@ when reporting issues, include it.
 
 ## Unreleased
 
+## 0.1.15 — 2026-11-16
+
 - Update scorer caveats and improve predictor prerequisite checks.
 - Persist New Run and Builder form entries as browser-local drafts; fresh browsers start with placeholder-only fields instead of hardcoded defaults.
 - Re-attach to a running Builder apply job after view switches or reloads; finished job panels can be dismissed.
