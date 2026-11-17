@@ -306,6 +306,12 @@ export interface BuilderState {
   warnings: string[]
 }
 
+export interface ProfileRefresh {
+  profiles: ClusterProfiles
+  builder: BuilderState
+  sync: { ok: boolean; synced_at: string | null; source: string | null; count: number | null; error: string | null }
+}
+
 export interface BuilderOperationIn {
   action: 'create' | 'edit' | 'delete'
   profile: string

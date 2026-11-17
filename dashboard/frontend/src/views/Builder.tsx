@@ -88,7 +88,6 @@ export default function Builder() {
 
   const [backups, setBackups] = useState<BuilderBackup[]>([])
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
-  const [syncing, setSyncing] = useState(false)
   const [scorerCaveats, setScorerCaveats] = useState<ProfilesCheckResponse['scorers'] | null>(null)
 
   const clusterFieldsReady = namespace.trim() && deployment.trim() && container.trim()
@@ -347,24 +346,31 @@ export default function Builder() {
     }
   }
 
-  const syncScriptMap = async () => {
-    setSyncing(true)
+  const refreshState = async () => {
+    if (!clusterFieldsReady) {
+      setStateError('Enter the namespace and EPP deployment/container to refresh the live configuration.')
+      return
+    }
+    setLoading(true)
+    setStateError(null)
     setSyncMessage(null)
     try {
-      const result = await api.builderSyncMap({
+      const result = await api.refreshProfiles({
         namespace,
         epp_deployment: deployment,
         epp_container: container,
       })
-      setSyncMessage(
-        `Synced ${result.synced} profiles into scripts/${result.file} (${new Date(
-          result.synced_at,
-        ).toLocaleString()}). New Run's profile list now matches the cluster.`,
-      )
+      setState(result.builder)
+      if (result.sync.ok) {
+        setSyncMessage(`Configuration refreshed and ${result.sync.count} profiles synced to the script map (${new Date(result.sync.synced_at!).toLocaleString()}).`)
+      } else {
+        setStateError(`Configuration loaded, but the script map could not be saved: ${result.sync.error}. Result labels may be stale.`)
+      }
     } catch (cause) {
-      setSyncMessage(String(cause))
+      setStateError(String(cause))
+      setState(null)
     } finally {
-      setSyncing(false)
+      setLoading(false)
     }
   }
 
@@ -379,18 +385,12 @@ export default function Builder() {
       <div className="page-head">
         <h1>Profile Builder</h1>
         <div className="actions">
-          <button onClick={loadState} disabled={loading}>
+          <button onClick={refreshState} disabled={loading}
+            title="Reload the live configuration and update the local script map; the cluster is not changed.">
             {loading ? 'Loading…' : 'Refresh'}
           </button>
-          <button onClick={copyLiveYaml} disabled={!state} title="Copy the raw live plugin YAML, e.g. to sync Helm values">
+          <button onClick={copyLiveYaml} disabled={!state} title="Copy the live EPP configuration YAML to the clipboard.">
             {copied ? 'Copied ✓' : 'Copy live YAML'}
-          </button>
-          <button
-            onClick={syncScriptMap}
-            disabled={!state || syncing}
-            title="Mirror the live scheduling profiles into the script's local profile map (gitignored), so New Run and CLI validation match the cluster"
-          >
-            {syncing ? 'Syncing…' : 'Sync script map'}
           </button>
         </div>
       </div>

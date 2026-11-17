@@ -466,7 +466,14 @@ def sync_profile_map(state: dict, namespace: str) -> dict:
     """
     types = {item["name"]: item["type"] for item in state["instances"]}
     profiles: dict[str, str] = {}
-    for profile in state["profiles"]:
+    profile_defs = state["profiles"]
+    if not profile_defs:
+        # EPP supplies an implicit default profile when none is configured.
+        profile_defs = [{"name": "default", "scorers": [
+            {"name": item["name"], "weight": 1}
+            for item in state["instances"] if item["kind"] == "scorer"
+        ]}]
+    for profile in profile_defs:
         scorers = profile.get("scorers") or []
         if not scorers:
             profiles[profile["name"]] = "no scorers"
@@ -489,9 +496,15 @@ def sync_profile_map(state: dict, namespace: str) -> dict:
         "profiles": profiles,
     }
     SCRIPT_MAP_LOCAL.parent.mkdir(parents=True, exist_ok=True)
-    temporary = SCRIPT_MAP_LOCAL.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(document, indent=2) + "\n")
-    temporary.replace(SCRIPT_MAP_LOCAL)
+    temporary = SCRIPT_MAP_LOCAL.with_name(f"{SCRIPT_MAP_LOCAL.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(json.dumps(document, indent=2) + "\n")
+        temporary.replace(SCRIPT_MAP_LOCAL)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
     return document
 
 

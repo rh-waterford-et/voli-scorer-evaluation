@@ -230,6 +230,26 @@ def builder_sync_map(request: builder.SyncMapRequest):
     }
 
 
+@app.post("/api/profiles/refresh")
+def refresh_profiles(request: builder.SyncMapRequest):
+    """Load and sync profiles from one live ConfigMap snapshot."""
+    fetched = cluster.fetch_config(
+        request.namespace, request.epp_deployment, request.epp_container,
+        request.configmap, request.config_key,
+    )
+    profiles = cluster.profiles_from_fetched(fetched, request.namespace, request.epp_deployment)
+    state = builder.build_state(fetched)
+    state["namespace"] = request.namespace
+    state["epp_deployment"] = request.epp_deployment
+    try:
+        document = builder.sync_profile_map(state, request.namespace)
+        sync = {"ok": True, "synced_at": document["synced_at"],
+                "source": document["source"], "count": len(document["profiles"]), "error": None}
+    except OSError as error:
+        sync = {"ok": False, "synced_at": None, "source": None, "count": None, "error": str(error)}
+    return {"profiles": profiles, "builder": state, "sync": sync}
+
+
 # -- runs ----------------------------------------------------------------------
 
 

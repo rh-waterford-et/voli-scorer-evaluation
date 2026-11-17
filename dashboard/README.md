@@ -27,8 +27,8 @@ explicit preview → confirm → apply chain described below.
 
 **Script profile map sync:** the map `stream_metrics.py` uses for validation
 and labels lives in `scripts/profile_scorers.json` (tracked default). Every
-successful apply — and the "Sync script map" button — mirrors the live
-scheduling profiles into `scripts/profile_scorers_local.json` (gitignored,
+successful apply, Builder's "Refresh", and New Run's "Load from cluster"
+mirror the live scheduling profiles into `scripts/profile_scorers_local.json` (gitignored,
 takes precedence). This keeps New Run's profile list, `--list-profiles`,
 `--profiles`/`--suite` validation, and result scorer labels aligned with the
 cluster, with no repository churn and no `unknown` labels.
@@ -58,10 +58,10 @@ file after router upgrades and update `verified_as_of`; the UI displays it.
   (unless disabled) runs read-only `oc` queries: `oc get pods`, `oc logs` on
   Gateway pods, and with `--epp-scores` also `oc get deployment/configmap` and
   `oc logs` on EPP pods.
-- "Load from cluster" in the profile picker runs `oc get deployment` +
-  `oc get configmap` (read-only) to list the live scheduling profiles,
-  including combined profiles and weights that are not in the script's
-  built-in map.
+- "Load from cluster" in the profile picker and "Refresh" in Builder run
+  `oc get deployment` + `oc get configmap` to list live profiles and update
+  the local script map from the same snapshot. The cluster reads are read-only;
+  the list includes combined profiles and weights absent from the tracked map.
 - **The profile builder mutates the cluster** and is the only feature that
   does. Every apply:
   1. re-fetches the ConfigMap and refuses if it changed since your preview
@@ -218,6 +218,7 @@ subprocess is not tracked); avoid restarting the backend mid-run.
 | `GET /api/profiles` | Script profile map (local synced file if present, else tracked default). |
 | `GET /api/profiles/check?endpoint=…` | Per-profile scorer operability: curated caveats + live prerequisite checks (read-only). |
 | `GET /api/profiles/cluster?namespace=…` | Live EPP profiles from the ConfigMap (read-only). |
+| `POST /api/profiles/refresh` | Load live profiles and update the local script map from one snapshot. |
 | `POST /api/runs` | Start a run with JSON `{name?, params}`. Image edits and transcriptions use multipart form data with that JSON in `params` and the upload in `file`. |
 | `POST /api/runs/preview` | Show the command lines without running. |
 | `GET /api/runs` | History (dashboard runs + `reports/*.json`). |

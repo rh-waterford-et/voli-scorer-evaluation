@@ -8,6 +8,7 @@ import type {
   ProfileCheck,
   ProfileInfo,
   ProfileListResponse,
+  ProfileRefresh,
   ProfilesCheckResponse,
   RunDetail,
   RunMeta,
@@ -89,6 +90,9 @@ export const api = {
     postJSON<{ run_id: string; profiles: { name: string; argv: string[] }[] }>('/api/runs/preview', body),
 
   builtinProfiles: () => getJSON<ProfileListResponse>('/api/profiles'),
+
+  refreshProfiles: (query: { namespace: string; epp_deployment: string; epp_container: string }) =>
+    postJSON<ProfileRefresh>('/api/profiles/refresh', query),
 
   profileCheck: (
     endpoint: string,

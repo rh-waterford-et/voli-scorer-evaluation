@@ -138,6 +138,11 @@ def discover_profiles(
 ) -> dict:
     """Read-only discovery of every scheduling profile in the live EPP config."""
     fetched = fetch_config(namespace, epp_deployment, epp_container, configmap, config_key)
+    return profiles_from_fetched(fetched, namespace, epp_deployment)
+
+
+def profiles_from_fetched(fetched: dict, namespace: str, epp_deployment: str) -> dict:
+    """Parse profiles from the same ConfigMap snapshot used by the caller."""
     text = fetched["text"]
     configmap_json = fetched["configmap"]
     name = fetched["configmap_name"]

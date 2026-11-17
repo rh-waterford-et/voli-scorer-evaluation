@@ -10,6 +10,9 @@ when reporting issues, include it.
 
 ## Unreleased
 
+- Sync the script map when loading or refreshing cluster profiles.
+- Add button hover hints for profile refresh and copying live YAML.
+
 ## 0.1.15 — 2026-11-16
 
 - Update scorer caveats and improve predictor prerequisite checks.

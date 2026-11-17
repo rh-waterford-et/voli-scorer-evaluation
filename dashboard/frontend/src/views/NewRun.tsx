@@ -223,13 +223,19 @@ export default function NewRun() {
     setLoadingProfiles(true)
     setProfileError(null)
     try {
-      const result = await api.clusterProfiles({
+      const result = await api.refreshProfiles({
         namespace,
         epp_deployment: eppDeployment,
         epp_container: eppContainer,
       })
-      setClusterInfo(result)
-      setProfileInfos(result.profiles)
+      setClusterInfo(result.profiles)
+      setProfileInfos(result.profiles.profiles)
+      if (result.sync.ok) {
+        setMapInfo({ map_source: 'local', map_synced_at: result.sync.synced_at,
+          map_sync_source: result.sync.source, map_profiles: result.sync.count })
+      } else {
+        setProfileError(`Profiles loaded, but the script map could not be saved: ${result.sync.error}. Result labels may be stale.`)
+      }
     } catch (cause) {
       setProfileError(String(cause))
     } finally {
@@ -441,11 +447,9 @@ export default function NewRun() {
       <div className="panel">
         <h2>Profiles</h2>
         <p className="muted">
-          This list comes from the script's profile map, which the{' '}
-          <Link to="/builder">Builder</Link> keeps synced with the live EPP config (into a
-          local, gitignored file) — profiles created or edited there appear here after a sync.
-          "Load from cluster" reads the live ConfigMap directly (read-only <code>oc get</code>)
-          and also shows per-profile weights and pickers.
+          This list starts from the script's local profile map. "Load from cluster" refreshes
+          it from the live ConfigMap and updates the map used for result labels and CLI suites.
+          The <Link to="/builder">Builder</Link> can also refresh the map.
         </p>
         {mapInfo && (
           <p className="muted" style={{ marginTop: -6 }}>
@@ -472,7 +476,7 @@ export default function NewRun() {
           <div>
             <label>
               EPP deployment / container (cluster lookup)
-              <HelpHint text="Where to read the live EPP plugin ConfigMap from when using 'Load from cluster'. Read-only oc get; nothing on the cluster is changed. The placeholders are examples." />
+              <HelpHint text="Where to read the live EPP plugin ConfigMap from when using 'Load from cluster'. The placeholders are examples." />
             </label>
             <div style={{ display: 'flex', gap: 8 }}>
               <input type="text" value={eppDeployment} onChange={(e) => setEppDeployment(e.target.value)} placeholder={PLACEHOLDERS.eppDeployment} />
@@ -480,7 +484,8 @@ export default function NewRun() {
             </div>
           </div>
           <div style={{ alignSelf: 'end' }}>
-            <button onClick={loadFromCluster} disabled={loadingProfiles}>
+            <button onClick={loadFromCluster} disabled={loadingProfiles}
+              title="Load live profiles and update the local script map; the cluster is not changed.">
               {loadingProfiles ? 'Loading…' : 'Load from cluster'}
             </button>
           </div>
