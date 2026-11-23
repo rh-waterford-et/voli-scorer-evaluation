@@ -44,14 +44,14 @@ class CaveatTests(unittest.TestCase):
 
     def test_old_tts_gap_is_qualified_and_structural_no_media_is_blocking(self):
         token = caveats.evaluate_types(['token-load-scorer'], '/v1/audio/speech', self.data, None)
-        self.assertEqual(token['severity'], 'unknown')
+        self.assertEqual(token['severity'], 'warn')
         self.assertIn('v1.0.0', token['reasons'][0])
         mm = caveats.evaluate_types(['mm-embeddings-cache-scorer'], '/v1/embeddings', self.data, None)
         self.assertEqual(mm['severity'], 'bad')
 
     def test_general_scorer_design_does_not_trigger_caveats(self):
         scorers = ['active-request-scorer', 'queue-scorer', 'load-aware-scorer',
-                   'running-requests-size-scorer', 'kv-cache-utilization-scorer',
+                   'running-requests-size-scorer',
                    'endpoint-attribute-weight-scorer']
         endpoints = ['/v1/chat/completions', '/v1/audio/speech', '/v1/embeddings',
                      '/v1/images/generations', '/v1/images/edits', '/v1/audio/transcriptions']
@@ -61,6 +61,20 @@ class CaveatTests(unittest.TestCase):
                     result = caveats.evaluate_types([scorer], endpoint, self.data, None)
                     self.assertEqual(result['severity'], 'ok')
                     self.assertEqual(result['reasons'], [])
+
+    def test_token_load_chat_warns_without_blocking_and_unknown_remains_visible(self):
+        chat = caveats.evaluate_types(['token-load-scorer'], '/v1/chat/completions', self.data, None)
+        self.assertEqual(chat['severity'], 'warn')
+        self.assertEqual(chat['status'], 'limited')
+        tts = caveats.evaluate_types(['token-load-scorer'], '/v1/audio/speech', self.data, None)
+        self.assertEqual(tts['severity'], 'warn')
+        self.assertIn('token-load-scorer: unknown', tts['statuses'])
+        self.assertIn('token-load-scorer: limited', tts['statuses'])
+
+    def test_kv_mapping_uncertainty_is_not_a_confirmed_failure(self):
+        result = caveats.evaluate_types(['kv-cache-utilization-scorer'], '/v1/images/generations', self.data, None)
+        self.assertEqual(result['severity'], 'unknown')
+        self.assertEqual(result['status'], 'unknown')
 
     def test_unverified_no_hit_lru_prerequisites_are_unknown(self):
         result = caveats.evaluate_types(['no-hit-lru-scorer'], '/v1/audio/speech', self.data, None)

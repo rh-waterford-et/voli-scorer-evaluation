@@ -1,6 +1,6 @@
 {
-  "verified_as_of": "2026-11-12",
-  "note": "Reviewed against llm-d-router v1.0.0 and upstream main at 647ca7cacd74de4fcc94b4717b72161de0f683b9 on 2026-11-12. Endpoint caveats are keyed by scorer type; the dashboard does not detect router version or validate producer, metrics, backend cache, predictor health or training. Check the deployed configuration and re-verify after upgrades. Unknown and limited caveats warn but do not suppress winner highlighting.",
+  "verified_as_of": "2026-11-23",
+  "note": "Source review on 2026-11-23: llm-d-router v1.0.0 (latest published release checked) and main at 8f372a856464be9cf6fb009b6b433d43af531ddb; related vLLM-Omni main at 964e65d5d4ddb68e1fcfd6143d8cf29be6e683af and latency-predictor main at 51e801acb515d2cd49342ce63da04ffd5cea0f7c. The dashboard does not detect deployed versions or validate parser/producer output, metric mappings, backend cache hits, predictor health or training. ok means no applicable caveat was found, not verified operability. Caveats use the current configuration and cluster view, not a historical run snapshot. Unknown and limited caveats warn but do not suppress Compare winner highlighting; the worst applicable caveat is inherited by a mixed profile, although its other scorers may still contribute useful signals.",
   "scorers": {
     "latency-scorer": {
       "requirements": [
@@ -55,7 +55,19 @@
             "/v1/audio/transcriptions"
           ],
           "status": "unknown",
-          "reason": "The default passthrough parser on v1.0.0 and checked main extracts no transcription input; PR #3964 is open. Verify the deployed parser, input signal and predictor samples for batch or streaming ASR."
+          "reason": "v1.0.0 falls through to passthrough. Main with PR #3964 (merged November 16) parses multipart audio and estimates duration-based input via the estimate backend; the vLLM render backend does not handle this body. Verify deployed parser, producer, predictor samples and whether streaming observations represent transcript latency."
+        },
+        {
+          "endpoints": [
+            "/v1/chat/completions",
+            "/v1/audio/speech",
+            "/v1/embeddings",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/audio/transcriptions"
+          ],
+          "status": "unknown",
+          "reason": "Verify per-endpoint metrics and prediction coverage. Checked main skips predictions for never-scraped endpoints; with partial coverage, endpoints lacking predictions are ranked behind predicted candidates. With no predictions the scorer uses a KV/queue/prefix composite fallback. Encoder-cache predictor features are opt-in (useEncoderCacheFeatures=false by default); first-body and subsequent stream observations need not be first useful audio/text or engine-token timings."
         }
       ]
     },
@@ -73,7 +85,7 @@
             "/v1/audio/speech"
           ],
           "status": "unknown",
-          "reason": "TTS token estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; the render backend does not handle TTS. Pseudo-tokens do not enable precise KV-event matching."
+          "reason": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; PR #4059 salts the fingerprint with full input and conditioning, so a shared text prefix or changed voice need not match. Randomized conditioning can isolate identical requests. Verify deployed producer and backend reuse; pseudo-tokens do not enable precise KV-event matching."
         },
         {
           "endpoints": [
@@ -94,7 +106,7 @@
             "/v1/audio/transcriptions"
           ],
           "status": "unknown",
-          "reason": "The default passthrough parser on v1.0.0 and checked main provides no transcription input for matching; PR #3964 is open. Repeated-audio cache reuse is not established."
+          "reason": "v1.0.0 supplies no transcription input via the default passthrough parser. Main with merged PR #3964 and the estimate backend supplies audio pseudo-tokens and a media hash for approximate matching. This does not establish precise KV-event matching or actual repeated-audio backend cache reuse."
         }
       ]
     },
@@ -133,7 +145,7 @@
             "/v1/audio/transcriptions"
           ],
           "status": "unknown",
-          "reason": "The default passthrough parser on v1.0.0 and checked main does not provide audio input length. PR #3964 is open; verify the deployed parser and estimate before using length-based decisions."
+          "reason": "Main with merged PR #3964 and the estimate backend estimates uploaded audio length; v1.0.0 falls through to passthrough and the checked vLLM render backend does not handle this body. A duration header overrides payload duration; PCM WAV headers can supply duration, while other formats use byte-rate estimates. Verify token rates, caps and endpoint ranges; pseudo-tokens are not exact engine context length."
         }
       ]
     },
@@ -151,7 +163,7 @@
             "/v1/audio/speech"
           ],
           "status": "unknown",
-          "reason": "TTS input estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 and the estimate backend provides approximate text input; it does not measure all audio-generation work. Verify deployed producer and scores."
+          "reason": "TTS input estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 and the estimate backend estimates input text; the vLLM render backend does not handle TTS. Main with PR #4382 also estimates output codec frames from spoken-input byte length when addEstimatedOutputTokens is enabled (default false). This heuristic is capped and does not measure actual audio duration or GPU cost; verify deployed settings and scores."
         },
         {
           "endpoints": [
@@ -172,7 +184,19 @@
             "/v1/audio/transcriptions"
           ],
           "status": "unknown",
-          "reason": "The default passthrough parser on v1.0.0 and checked main supplies no transcription input estimate. PR #3964 is open; until supported and deployed, input load cannot reflect clip duration."
+          "reason": "Main with merged PR #3964 and the estimate backend supplies duration-based audio input; v1.0.0 falls through to passthrough. A duration header overrides payload duration; PCM WAV headers can supply duration, while other formats use byte-rate estimates. Verify deployed parser, producer, token rates/caps and overlapping-request scores; the checked vLLM render backend does not handle this body."
+        },
+        {
+          "endpoints": [
+            "/v1/chat/completions",
+            "/v1/audio/speech",
+            "/v1/embeddings",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/audio/transcriptions"
+          ],
+          "status": "limited",
+          "reason": "Verify inflight-load-producer accounting, not only tokenization. With addEstimatedOutputTokens=false (default), input load is released at the first response-body signal, or earlier on a compatible configured KV event, so ongoing generation may no longer contribute token load. Prefix-match data can discount input even without a prefix scorer in the selected profile. Output estimates are optional heuristics; non-text cost weighting in PR #2967 remains unmerged at the review commit."
         }
       ]
     },
@@ -190,7 +214,7 @@
             "/v1/audio/speech"
           ],
           "status": "unknown",
-          "reason": "v0.11.0/v1.0.0 lack TTS token estimates; absent prefix data, all requests are treated as cold. Main with PR #3712 can supply approximate matches; verify producer and backend behavior."
+          "reason": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; PR #4059 salts the fingerprint with full input and conditioning, so a shared text prefix or changed voice need not match. Randomized conditioning can isolate identical requests. Verify deployed producer and backend reuse; pseudo-tokens do not enable precise KV-event matching. Without match data all requests are treated as cold, testing LRU spreading."
         },
         {
           "endpoints": [
@@ -211,7 +235,7 @@
             "/v1/audio/transcriptions"
           ],
           "status": "unknown",
-          "reason": "With the default passthrough parser, no transcription prefix data is available and requests are treated as cold. PR #3964 is open; audio cache reuse remains unverified."
+          "reason": "Main with merged PR #3964 and the estimate backend can supply audio-derived approximate prefix data; v1.0.0 defaults to passthrough. Without match data requests are treated as cold, testing LRU spreading. Validate presumed warm and cold cases; an estimated hit does not prove backend audio-cache reuse."
         }
       ]
     },
@@ -232,14 +256,30 @@
             "/v1/images/edits"
           ],
           "status": "unknown",
-          "reason": "Main with PR #4054 can produce a feature for the uploaded image through the estimate backend. The cache producer models reuse; verify the deployed version, producer and whether the image backend actually reuses encoder outputs."
+          "reason": "Main with PR #4054 and the estimate backend can supply an uploaded-image feature. For this route the cache producer needs token-produced media metadata. Verify deployed producers, modeled cache capacity and whether the image backend actually reuses encoder outputs; a predicted match is not an engine hit."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
           "status": "unknown",
-          "reason": "The default passthrough parser on v1.0.0 and checked main does not expose uploaded audio to the cache producer. PR #3964 is open; backend encoder-cache reuse for this route is not established."
+          "reason": "Main with merged PR #3964 and the estimate backend can supply an uploaded-audio feature; v1.0.0 defaults to passthrough. For this route the cache producer needs token-produced media metadata. Verify deployed producers, modeled cache capacity and actual backend encoder-cache reuse; a predicted match is not an engine hit."
+        }
+      ]
+    },
+    "kv-cache-utilization-scorer": {
+      "caveats": [
+        {
+          "endpoints": [
+            "/v1/chat/completions",
+            "/v1/audio/speech",
+            "/v1/embeddings",
+            "/v1/images/generations",
+            "/v1/images/edits",
+            "/v1/audio/transcriptions"
+          ],
+          "status": "unknown",
+          "reason": "Verify a meaningful per-endpoint KV metric and its stage labels. Checked main adds a built-in vllm-omni engine mapping for pipeline waiting/running counts but deliberately leaves KV usage unmapped; a successful scrape can then leave KV usage at zero and yield tied high scores. A custom AR-stage mapping may supply KV data, but it does not measure the whole multimodal pipeline or total GPU load. The dashboard does not inspect the mapping."
         }
       ]
     }
