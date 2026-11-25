@@ -10,14 +10,14 @@ when reporting issues, include it.
 
 ## Unreleased
 
+
+## 0.1.16 — 2026-11-23
+
 - Group runs into named series: a Series field in New Run and a per-run / bulk "Move to series" action in History render as collapsible sections; ungrouped runs stay on top.
 - Show scorer warnings immediately from displayed profiles while cluster checks run; ignore stale responses after changes.
 - Revalidate the built frontend page on reload so clients can pick up updated dashboard assets.
-
 - Keep scorer warnings visible outside the scrolling profile list, including expanded details.
-
 - Simplify scorer caveats to one Warning badge with short explanations and expandable details; warnings no longer suppress Compare winner highlighting.
-
 - Sync the script map when loading or refreshing cluster profiles.
 - Add button hover hints for profile refresh and copying live YAML.
 
