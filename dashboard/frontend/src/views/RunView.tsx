@@ -4,6 +4,7 @@ import SortTable, { type Column } from '../components/SortTable'
 import { EppScoreView, Histogram, MetricBarChart } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
 import { api, openRunEvents } from '../api'
+import ScorerWarning from '../components/ScorerWarning'
 import type { ProfileCheck, RequestResult, RunDetail, ScriptRun } from '../types'
 import {
   METRIC_LABELS,
@@ -570,11 +571,11 @@ export default function RunView() {
 
       {caveatNotes.length > 0 && (
         <div className="warn-text panel">
-          <strong>Scorer caveats apply to profiles in this run:</strong>
+          <strong>Scorer warnings for this run:</strong>
           <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
             {caveatNotes.map((note) => (
               <li key={note.profile}>
-                <span className="mono">{note.profile}</span> — {note.check.reasons.join(' ')}
+                <span className="mono">{note.profile}</span> — {note.check.reasons.join(' ')} <ScorerWarning reasons={note.check.reasons} details={note.check.details} detailsOnly />
               </li>
             ))}
           </ul>

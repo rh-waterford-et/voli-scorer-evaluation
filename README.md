@@ -159,4 +159,4 @@ Then open <http://localhost:8765>.
 
 ## Scorer caveats
 
-Known scorer limitations per endpoint (e.g. the router token-estimator gap for TTS requests, and the latency predictor sidecar requirement) are recorded in [`scripts/profile_caveats.json`](scripts/profile_caveats.json). The dashboard checks this file — plus the live EPP deployment state — when you select profiles, view results, and compare runs, so unsupported combinations are flagged instead of silently producing misleading numbers. The file is hand-maintained; re-verify it after router upgrades.
+Known scorer limitations per endpoint (e.g. the router token-estimator gap for TTS requests, and the latency predictor sidecar requirement) are recorded in [`scripts/profile_caveats.json`](scripts/profile_caveats.json). The dashboard checks this file — plus the live EPP deployment state — when you select profiles, view results, and compare runs, so relevant scorer warnings remain visible when interpreting results. Scorer warnings do not block comparisons. The file is hand-maintained; re-verify it after router upgrades.

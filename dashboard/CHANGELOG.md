@@ -10,6 +10,10 @@ when reporting issues, include it.
 
 ## Unreleased
 
+- Keep scorer warnings visible outside the scrolling profile list, including expanded details.
+
+- Simplify scorer caveats to one Warning badge with short explanations and expandable details; warnings no longer suppress Compare winner highlighting.
+
 - Sync the script map when loading or refreshing cluster profiles.
 - Add button hover hints for profile refresh and copying live YAML.
 

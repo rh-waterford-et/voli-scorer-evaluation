@@ -13,9 +13,11 @@ import {
 } from 'recharts'
 import { MetricBarChart, chartColors } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
+import ScorerWarning from '../components/ScorerWarning'
 import { api } from '../api'
 import { useTheme } from '../theme'
-import type { ProfileCheck, ProfilesCheckResponse, RunDetail, ScriptRun } from '../types'
+import type { ProfilesCheckResponse, RunDetail, ScriptRun } from '../types'
+import { comparisonState } from '../comparisonPolicy'
 import { METRIC_LABELS, METRIC_ORDER, fmtMs, loadLabel } from '../format'
 import { isTranscription, promptOf, transcriptionModeState } from '../comparePrompts'
 
@@ -314,26 +316,9 @@ export default function Compare() {
     )
   }
 
-  // Profiles whose scorers have no usable signal (unsupported / not-useful /
-  // missing prerequisites) make rankings misleading: a "deaf" scorer can win.
-  const inoperableProfiles = new Set<string>()
-  // Limited (partial signal) or unverified scorers keep their rankings but
-  // get an interpretation note.
-  const caveatedProfiles = new Map<string, ProfileCheck>()
-  if (scorerCheck) {
-    for (const run of allRuns) {
-      const check = scorerCheck.profiles[run.profile]
-      if (!check || check.severity === 'ok') continue
-      if (check.severity === 'bad') inoperableProfiles.add(run.profile)
-      else caveatedProfiles.set(run.profile, check)
-    }
-  }
-  if (inoperableProfiles.size) {
-    mismatched.push(`scorer operability (${Array.from(inoperableProfiles).join(', ')})`)
-  }
-  const operabilityBlocked = inoperableProfiles.size > 0
-  const settingsMismatched = mismatched.length > (operabilityBlocked ? 1 : 0)
-  const comparable = mismatched.length === 0
+  const { comparable, warnings: caveatedProfiles } = comparisonState(
+    mismatched, allRuns.map((run) => run.profile), scorerCheck?.profiles,
+  )
 
   // Profiles selected from suite runs: measured alongside other profiles, so
   // sequential-execution effects (warm caches, varying load) may apply.
@@ -451,19 +436,8 @@ export default function Compare() {
         <div className="warn-text panel">
           <strong>Not directly comparable:</strong> the selected runs differ in{' '}
           {mismatched.join(', ')} — winner highlighting is disabled.
-          {settingsMismatched && (
-            <>
-              {' '}Latency depends heavily on input length, output modalities, and session
-              behavior, so differences may reflect those settings rather than the routing
-              profiles.
-            </>
-          )}
-          {operabilityBlocked && (
-            <>
-              {' '}A scorer with no usable signal for this workload can still appear to win,
-              so its rankings would be misleading.
-            </>
-          )}
+          {' '}Latency depends heavily on input length, output modalities, and session
+          behavior, so differences may reflect those settings rather than the routing profiles.
           {prompts.length > 1 && (
             <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
               {prompts.map((prompt) => {
@@ -479,16 +453,7 @@ export default function Compare() {
               })}
             </ul>
           )}
-          {inoperableProfiles.size > 0 && (
-            <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
-              {Array.from(inoperableProfiles).map((profile) => (
-                <li key={profile} className="muted">
-                  <span className="mono">{profile}</span>:{' '}
-                  {scorerCheck?.profiles[profile]?.reasons.join(' ')}
-                </li>
-              ))}
-            </ul>
-          )}
+
         </div>
       )}
 
@@ -500,14 +465,13 @@ export default function Compare() {
 
       {caveatedProfiles.size > 0 && (
         <div className="panel warn-text">
-          <strong>Interpretation caveats</strong>
-          {comparable
-            ? " — rankings stay enabled, but these profiles' scorers operate with a partial or unverified signal for this workload:"
-            : " — these profiles' scorers also operate with a partial or unverified signal (less severe than the blocking issues above):"}
+          <strong>Scorer warnings</strong> — check these signals before interpreting results.
+          A faster profile does not prove every scorer influenced routing.
           <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
             {Array.from(caveatedProfiles.entries()).map(([profile, check]) => (
               <li key={profile} className="muted">
-                <span className="mono">{profile}</span>: {check.reasons.join(' ')}
+                <span className="mono">{profile}</span>: {check.reasons.join(' ')}{' '}
+                <ScorerWarning reasons={check.reasons} details={check.details} detailsOnly />
               </li>
             ))}
           </ul>

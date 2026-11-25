@@ -1,4 +1,4 @@
-"""Caveat behavior for version-dependent scoring and predictor deployments."""
+"""Scorer warnings remain informative without claiming deployment health."""
 
 import sys
 import unittest
@@ -20,74 +20,59 @@ class CaveatTests(unittest.TestCase):
         self.data = caveats.load_caveats()
         self.latency = self.data['scorers']['latency-scorer']
 
-    def test_missing_predictor_sidecars_do_not_claim_external_services_are_broken(self):
-        result = caveats.evaluate_scorer(self.latency, '/v1/audio/speech', deployment('epp'))
-        self.assertEqual(result['severity'], 'unknown')
-        self.assertTrue(any('services' in reason for reason in result['reasons']))
+    def test_missing_or_unavailable_predictor_containers_warn(self):
+        for cluster in (None, deployment('epp')):
+            with self.subTest(cluster=cluster):
+                result = caveats.evaluate_scorer(self.latency, '/v1/audio/speech', cluster)
+                self.assertEqual(result['severity'], 'warning')
+                self.assertTrue(any('predictor' in reason.lower() for reason in result['reasons']))
 
-    def test_present_sidecars_do_not_prove_predictor_health(self):
+    def test_predictor_containers_do_not_prove_health_or_training(self):
         result = caveats.evaluate_scorer(self.latency, '/v1/chat/completions', deployment(
             'llm-d-latency-predictor-training-server',
             'llm-d-latency-predictor-prediction-server',
         ))
-        self.assertEqual(result['severity'], 'unknown')
-        self.assertTrue(any('readiness' in reason or 'health' in reason for reason in result['reasons']))
+        self.assertEqual(result['severity'], 'warning')
+        self.assertTrue(any('trained' in reason for reason in result['reasons']))
 
-    def test_unavailable_cluster_reports_unknown(self):
-        result = caveats.evaluate_scorer(self.latency, '/v1/audio/speech', None)
-        self.assertEqual(result['severity'], 'unknown')
-        self.assertTrue(any('cluster state unavailable' in reason for reason in result['reasons']))
-
-    def test_unqualified_requirements_remain_blocking(self):
-        entry = {'requirements': [{'components': [{'name': 'required', 'match': 'needed'}]}]}
-        self.assertEqual(caveats.evaluate_scorer(entry, '/any', deployment('epp'))['severity'], 'bad')
-
-    def test_old_tts_gap_is_qualified_and_structural_no_media_is_blocking(self):
-        token = caveats.evaluate_types(['token-load-scorer'], '/v1/audio/speech', self.data, None)
-        self.assertEqual(token['severity'], 'warn')
-        self.assertIn('v1.0.0', token['reasons'][0])
-        mm = caveats.evaluate_types(['mm-embeddings-cache-scorer'], '/v1/embeddings', self.data, None)
-        self.assertEqual(mm['severity'], 'bad')
-
-    def test_general_scorer_design_does_not_trigger_caveats(self):
-        scorers = ['active-request-scorer', 'queue-scorer', 'load-aware-scorer',
-                   'running-requests-size-scorer',
-                   'endpoint-attribute-weight-scorer']
-        endpoints = ['/v1/chat/completions', '/v1/audio/speech', '/v1/embeddings',
-                     '/v1/images/generations', '/v1/images/edits', '/v1/audio/transcriptions']
-        for scorer in scorers:
-            for endpoint in endpoints:
-                with self.subTest(scorer=scorer, endpoint=endpoint):
-                    result = caveats.evaluate_types([scorer], endpoint, self.data, None)
-                    self.assertEqual(result['severity'], 'ok')
-                    self.assertEqual(result['reasons'], [])
-
-    def test_token_load_chat_warns_without_blocking_and_unknown_remains_visible(self):
-        chat = caveats.evaluate_types(['token-load-scorer'], '/v1/chat/completions', self.data, None)
-        self.assertEqual(chat['severity'], 'warn')
-        self.assertEqual(chat['status'], 'limited')
-        tts = caveats.evaluate_types(['token-load-scorer'], '/v1/audio/speech', self.data, None)
-        self.assertEqual(tts['severity'], 'warn')
-        self.assertIn('token-load-scorer: unknown', tts['statuses'])
-        self.assertIn('token-load-scorer: limited', tts['statuses'])
-
-    def test_kv_mapping_uncertainty_is_not_a_confirmed_failure(self):
-        result = caveats.evaluate_types(['kv-cache-utilization-scorer'], '/v1/images/generations', self.data, None)
-        self.assertEqual(result['severity'], 'unknown')
-        self.assertEqual(result['status'], 'unknown')
-
-    def test_unverified_no_hit_lru_prerequisites_are_unknown(self):
-        result = caveats.evaluate_types(['no-hit-lru-scorer'], '/v1/audio/speech', self.data, None)
-        self.assertEqual(result['severity'], 'unknown')
-        self.assertIn('treated as cold', result['reasons'][0])
-
-    def test_combined_profile_inherits_worst_applicable_caveat(self):
+    def test_mixed_profile_names_only_scorers_that_need_attention(self):
         result = caveats.evaluate_types(
-            ['no-hit-lru-scorer', 'mm-embeddings-cache-scorer'],
+            ['queue-scorer', 'mm-embeddings-cache-scorer'],
             '/v1/images/generations', self.data, deployment('epp'),
         )
-        self.assertEqual(result['severity'], 'bad')
-        self.assertEqual(len(result['reasons']), 2)
+        self.assertEqual(result['severity'], 'warning')
+        self.assertEqual(len(result['reasons']), 1)
+        self.assertIn('mm-embeddings-cache-scorer', result['reasons'][0])
+        self.assertIn('no input media', result['reasons'][0])
+        self.assertTrue(result['details'])
+
+    def test_token_load_has_short_message_and_version_details(self):
+        result = caveats.evaluate_types(['token-load-scorer'], '/v1/audio/speech', self.data, None)
+        self.assertEqual(result['severity'], 'warning')
+        self.assertTrue(any('first response' in reason for reason in result['reasons']))
+        self.assertTrue(any('v1.0.0' in detail for detail in result['details']))
+
+    def test_no_warning_does_not_add_unrelated_reasons(self):
+        result = caveats.evaluate_types(['queue-scorer'], '/v1/audio/speech', self.data, None)
+        self.assertEqual(result['severity'], 'ok')
+        self.assertEqual(result['reasons'], [])
+        self.assertEqual(result['details'], [])
+
+    def test_builder_deduplicates_summaries_but_keeps_endpoint_details(self):
+        result = caveats.evaluate_scorer_across_endpoints(
+            self.data['scorers']['mm-embeddings-cache-scorer'],
+            ['/v1/chat/completions', '/v1/audio/speech'], None,
+        )
+        self.assertEqual(result['severity'], 'warning')
+        self.assertEqual(len(result['reasons']), 1)
+        self.assertEqual(len(result['details']), 2)
+
+    def test_data_covers_only_warning_status_with_concise_messages(self):
+        for scorer in self.data['scorers'].values():
+            for item in scorer['caveats']:
+                self.assertEqual(item['status'], 'warning')
+                self.assertLess(len(item['reason']), 160)
+                self.assertTrue(item['details'])
 
 
 if __name__ == '__main__':

@@ -12,14 +12,14 @@ pseudo-tokens do not establish precise KV matches or actual backend cache hits.
 The checked vLLM render backend does not handle the tool's dedicated TTS,
 embeddings, image or transcription bodies.
 
-Token-load accounting now carries a limited warning: output estimation defaults
+Token-load accounting now carries a warning: output estimation defaults
 off, input load can be released at first response, and prefix-match data can
 discount input even without a prefix scorer in the selected profile. New main
 builds optionally estimate TTS output frames (#4382); this remains a heuristic.
 TTS fingerprints also depend on full input and conditioning (#4059).
 
 The built-in Omni metric mapping (#4381) supplies pipeline waiting/running
-counts but leaves KV usage unmapped. KV scoring is unknown until a meaningful
+counts but leaves KV usage unmapped. KV scoring needs verification until a meaningful
 metric/stage mapping is verified. Successful scraping alone does not prove it.
 
 Predictor servers may run as sidecars or services. Container presence does not
@@ -27,7 +27,7 @@ establish health, training or prediction coverage. Checked main skips prediction
 for never-scraped endpoints, ranks endpoints without predictions behind predicted
 candidates, and uses a KV/queue/prefix fallback when no predictions exist.
 
-Unknown and limited caveats warn without suppressing Compare winner highlighting.
-`ok` means no applicable caveat was found, not verified operability. Mixed profiles
-inherit their worst applicable caveat, even if other scorers remain useful. Checks
-use the current configuration and cluster view, not a historical run snapshot.
+All scorer caveats appear as warnings with short explanations and expandable
+details. They do not suppress Compare winner highlighting. A warning identifies
+the affected scorer in mixed profiles; no warning does not establish operability.
+Checks use the current configuration and cluster view, not a historical snapshot.

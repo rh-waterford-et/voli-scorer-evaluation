@@ -1,3 +1,4 @@
+import ScorerWarning from '../components/ScorerWarning'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
@@ -565,7 +566,7 @@ export default function Builder() {
                 {notes.map((note) => (
                   <div key={note.instance.name}>
                     <span className="mono">{note.instance.name}</span> ({note.instance.type}):{' '}
-                    {note.entry.reasons.join(' ')}
+                    {note.entry.reasons.join(' ')} <ScorerWarning reasons={note.entry.reasons} details={note.entry.details} detailsOnly />
                   </div>
                 ))}
               </div>

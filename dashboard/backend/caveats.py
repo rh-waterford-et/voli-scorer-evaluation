@@ -6,12 +6,11 @@ Two sources feed profile operability:
     scripts/profile_caveats.json (the team-maintained source of truth).
   * requirements -- live-checkable preconditions declared in the same file
     (e.g. the latency predictor sidecars), evaluated against the EPP
-    Deployment. When the cluster cannot be read, requirements report
-    "unknown" -- never "missing" -- so an unavailable cluster is never
-    mistaken for a broken one.
+    Deployment. When the cluster cannot be read, the warning says
+    prerequisites could not be verified.
 
-Severity ranking (worst first): bad (unsupported / not-useful / broken),
-warn (limited), unknown (prerequisites not verified), ok.
+All applicable caveats and missing prerequisites produce a warning.
+No warning does not prove that a scorer has a useful signal.
 """
 
 import json
@@ -22,16 +21,6 @@ from typing import Optional
 from paths import SCRIPTS_DIR
 
 CAVEATS_FILE = SCRIPTS_DIR / "profile_caveats.json"
-
-SEVERITY_ORDER = {"bad": 0, "warn": 1, "unknown": 2, "ok": 3}
-STATUS_SEVERITY = {
-    "unsupported": "bad",
-    "not-useful": "bad",
-    "broken": "bad",
-    "limited": "warn",
-    "unknown": "unknown",
-    "ok": "ok",
-}
 
 # Trailing weight suffix in profile-map descriptions: "queue-scorer (2)".
 WEIGHT_SUFFIX = re.compile(r"\s*\([^)]*\)\s*$")
@@ -86,23 +75,19 @@ def _component_present(deployment: Optional[dict], pattern: str) -> bool:
     return False
 
 
-def _worst(severities: list[str]) -> str:
-    if not severities:
-        return "ok"
-    return min(severities, key=lambda severity: SEVERITY_ORDER.get(severity, 3))
-
-
 def evaluate_scorer(entry: dict, endpoint: str, deployment: Optional[dict]) -> dict:
     """Curated caveats for one endpoint plus live requirement checks."""
     statuses: list[str] = []
     reasons: list[str] = []
+    details: list[str] = []
 
     for caveat in entry.get("caveats") or []:
         if not isinstance(caveat, dict) or endpoint not in (caveat.get("endpoints") or []):
             continue
-        status = str(caveat.get("status") or "limited")
-        statuses.append(status)
-        reasons.append(str(caveat.get("reason") or status))
+        statuses.append("warning")
+        reason = str(caveat.get("reason") or "Check this scorer before interpreting results.")
+        reasons.append(reason)
+        details.append(str(caveat.get("details") or reason))
 
     for requirement in entry.get("requirements") or []:
         if not isinstance(requirement, dict):
@@ -113,8 +98,9 @@ def evaluate_scorer(entry: dict, endpoint: str, deployment: Optional[dict]) -> d
                 str(component.get("name") or component.get("match") or "component")
                 for component in components
             )
-            statuses.append("unknown")
-            reasons.append(f"prerequisites not verified (cluster state unavailable): {names}")
+            statuses.append("warning")
+            reasons.append("Cluster unavailable; check predictor services and training.")
+            details.append(f"Prerequisites not verified: {names}")
             continue
         missing = [
             str(component.get("name") or component.get("match") or "component")
@@ -122,54 +108,45 @@ def evaluate_scorer(entry: dict, endpoint: str, deployment: Optional[dict]) -> d
             if not _component_present(deployment, str(component.get("match") or ""))
         ]
         if missing:
-            # A component can be absent from the EPP pod yet supplied by an
-            # external service. The data file can mark this check uncertain.
-            missing_status = requirement.get("missing_status", "broken")
-            if missing_status not in STATUS_SEVERITY:
-                missing_status = "unknown"
-            statuses.append(missing_status)
-            reason = requirement.get("missing_reason")
-            reasons.append(str(reason) if reason else "missing required components: " + ", ".join(missing))
+            statuses.append("warning")
+            reason = requirement.get("missing_reason") or "Check required components: " + ", ".join(missing)
+            reasons.append(str(reason))
+            details.append("Not found in the EPP pod: " + ", ".join(missing) + ". Components may run as separate services.")
 
-    severity = _worst([STATUS_SEVERITY.get(status, "ok") for status in statuses])
-    status_word = next(
-        (status for status in statuses if STATUS_SEVERITY.get(status) == severity), "ok"
-    )
-    return {"severity": severity, "status": status_word, "statuses": statuses, "reasons": reasons}
+    severity = "warning" if statuses else "ok"
+    return {"severity": severity, "status": severity, "statuses": statuses, "reasons": reasons, "details": details}
 
 
 def evaluate_types(scorer_types: list[str], endpoint: str, caveats: dict, deployment: Optional[dict]) -> dict:
-    """Evaluate operability for a profile defined by the given scorer types."""
-    statuses: list[str] = []
+    """Collect warnings by scorer so mixed profiles identify the affected component."""
     reasons: list[str] = []
+    details: list[str] = []
     for scorer_type in scorer_types:
         entry = (caveats.get("scorers") or {}).get(scorer_type)
         if not isinstance(entry, dict):
             continue
         evaluation = evaluate_scorer(entry, endpoint, deployment)
-        for status, reason in zip(evaluation["statuses"], evaluation["reasons"]):
-            statuses.append(f"{scorer_type}: {status}")
-            reasons.append(f"{scorer_type} — {reason}")
-    severity = _worst([STATUS_SEVERITY.get(status.split(": ")[-1], "ok") for status in statuses])
-    status_word = next(
-        (status for status in statuses if STATUS_SEVERITY.get(status.split(": ")[-1]) == severity),
-        "ok",
-    )
-    return {
-        "severity": severity,
-        "status": status_word.split(": ")[-1] if status_word != "ok" else "ok",
-        "statuses": statuses,
-        "reasons": reasons,
-        "scorer_types": list(scorer_types),
-    }
+        for reason in evaluation["reasons"]:
+            value = f"{scorer_type} — {reason}"
+            if value not in reasons:
+                reasons.append(value)
+        for detail in evaluation["details"]:
+            value = f"{scorer_type} — {detail}"
+            if value not in details:
+                details.append(value)
+    severity = "warning" if reasons else "ok"
+    return {"severity": severity, "status": severity, "statuses": [severity] if reasons else [],
+            "reasons": reasons, "details": details, "scorer_types": list(scorer_types)}
 
 
 def evaluate_scorer_across_endpoints(entry: dict, endpoints: list[str], deployment: Optional[dict]) -> dict:
-    """Endpoint-agnostic view for the Builder: worst severity, endpoint-prefixed reasons."""
+    """Builder view: short deduplicated warnings with endpoint-specific detail."""
     reasons: list[str] = []
-    severities: list[str] = []
+    details: list[str] = []
     for endpoint in endpoints:
         evaluation = evaluate_scorer(entry, endpoint, deployment)
-        severities.append(evaluation["severity"])
-        reasons.extend(f"{endpoint}: {reason}" for reason in evaluation["reasons"])
-    return {"severity": _worst(severities), "reasons": reasons}
+        for reason in evaluation["reasons"]:
+            if reason not in reasons:
+                reasons.append(reason)
+        details.extend(f"{endpoint}: {detail}" for detail in evaluation["details"])
+    return {"severity": "warning" if reasons else "ok", "reasons": reasons, "details": details}

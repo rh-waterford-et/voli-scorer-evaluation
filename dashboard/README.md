@@ -17,10 +17,10 @@ and runs the benchmark as a subprocess.
 | Live progress | Per-profile status, the script's progress lines, and the full stdout/stderr log stream (SSE). Cancel mid-run. |
 | Results | Sortable table per profile × load (TTFA/TTFT/TPOT/E2E, mean/p50/p99), expandable to full metrics, pod routing distribution, and per-request details including raw EPP scores, weighted contributions, and picker selection. |
 | Charts | p50/p99 comparison bars across profile-runs; latency histograms per run. |
-| Compare | Select **profiles** in History — standalone runs directly, suite runs via in-place expansion — and compare any mix in a side-by-side matrix for a chosen metric/statistic/load. Best value highlighted (per-profile across runs, or overall when no profile repeats). Confounders (prompts, sessions, modalities, models, scorer operability) warn and suppress winner highlighting; profiles measured within suite runs get an execution-order note. |
+| Compare | Select **profiles** in History — standalone runs directly, suite runs via in-place expansion — and compare any mix in a side-by-side matrix for a chosen metric/statistic/load. Best value highlighted (per-profile across runs, or overall when no profile repeats). Confirmed workload mismatches suppress winner highlighting; scorer warnings remain visible without blocking it; profiles measured within suite runs get an execution-order note. |
 | History | Dashboard runs stored under `dashboard/data/runs/`. Selection is per scheduling profile: standalone runs select directly, suite runs (marked `suite`) expand in place to their individual profiles. Entries can be deleted individually or in bulk (deletion is always whole runs). |
 | Profile builder | Compose new profiles from scorers already instantiated in the live ConfigMap (with weights and picker), edit or delete existing profiles, preview the exact YAML diff, then apply: backup → patch one ConfigMap key → restart EPP → wait for Ready → verify → **sync the script's profile map**. Failed rollouts offer an explicit revert from the saved backup. "Copy live YAML" helps sync Helm values from the live config. |
-| Scorer caveats | Per-profile operability from `scripts/profile_caveats.json` (curated, endpoint-conditional, keyed by scorer type) plus live prerequisite checks against the EPP Deployment (e.g. the latency predictor sidecars). Badges in New Run, banners on run results, composer hints in the Builder, and Compare winner-suppression for inoperable scorers. |
+| Scorer caveats | Per-profile warnings from `scripts/profile_caveats.json` (curated, endpoint-conditional, keyed by scorer type) plus live prerequisite checks against the EPP Deployment (e.g. the latency predictor sidecars). Badges in New Run, banners on run results, composer hints in the Builder, and interpretation notes in Compare. |
 
 The builder is the only part that modifies the cluster, and only through the
 explicit preview → confirm → apply chain described below.
@@ -33,22 +33,17 @@ takes precedence). This keeps New Run's profile list, `--list-profiles`,
 `--profiles`/`--suite` validation, and result scorer labels aligned with the
 cluster, with no repository churn and no `unknown` labels.
 
-**Scorer caveats:** `scripts/profile_caveats.json` (tracked, team-maintained
-— the source of truth for scorer caveats) records endpoint-conditional
-caveats per scorer type, plus *requirements* that are
-checked live against the EPP Deployment, such as the latency predictor
-sidecars (`llm-d-latency-predictor-training-server` / `-prediction-server`).
-Requirements are matched against specific container components by name or
-image, so unrelated sidecars cannot satisfy them. Missing predictor sidecars
-report **unknown**, because training and prediction servers may run as separate
-services; even present containers do not establish readiness or training. When
-the cluster cannot be read, requirements also report **unknown**. The dashboard
-does not detect the deployed router version or prove scorer signals are useful.
-Severities:
-`unsupported`/`not-useful`/`broken` (bad), `limited` (warn), `unknown`.
-Only *bad* severity suppresses Compare winner highlighting; *warn*/*unknown*
-show an informational interpretation note there instead. Re-verify the
-file after router upgrades and update `verified_as_of`; the UI displays it.
+**Scorer warnings:** `scripts/profile_caveats.json` contains concise,
+endpoint-specific warnings by scorer type and longer details. The dashboard
+also checks for known predictor containers. Missing containers produce a
+warning because the services may run separately; their presence does not prove
+readiness or training. The dashboard does not verify router versions, token
+signals or actual cache hits. No warning means no applicable issue was found,
+not that operability was verified. Warnings identify the affected scorer in
+mixed profiles and do not suppress Compare winner highlighting. Confirmed
+workload mismatches and invalid results retain their existing safeguards.
+Checks use current configuration, not a historical run snapshot. The source
+review date remains `verified_as_of` in the JSON.
 
 ## Safety / access model
 

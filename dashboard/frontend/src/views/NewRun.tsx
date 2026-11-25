@@ -1,3 +1,4 @@
+import ScorerWarning from '../components/ScorerWarning'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
@@ -46,19 +47,7 @@ function profileSubText(profile: ProfileInfo): string {
 
 function caveatBadge(check?: ProfileCheck) {
   if (!check || check.severity === 'ok') return null
-  const label =
-    check.severity === 'bad'
-      ? check.status
-      : check.severity === 'warn'
-        ? 'limited'
-        : 'unverified'
-  const cls =
-    check.severity === 'bad' ? 'badge bad' : check.severity === 'warn' ? 'badge warn' : 'badge'
-  return (
-    <span className={cls} title={check.reasons.join('\n')}>
-      {label}
-    </span>
-  )
+  return <ScorerWarning reasons={check.reasons} details={check.details} />
 }
 
 export default function NewRun() {
@@ -503,11 +492,10 @@ export default function NewRun() {
         {profileError && <div className="error-text">{profileError}</div>}
         {checks && (
           <p className="muted" style={{ marginTop: -6 }}>
-            Caveats from <code>scripts/profile_caveats.json</code> (verified{' '}
-            {checks.verified_as_of ?? '—'}) · prerequisites{' '}
+            Scorer warnings are based on a source review ({checks.verified_as_of ?? 'date unknown'})
             {checks.cluster_access === 'ok'
-              ? 'checked against the live EPP deployment'
-              : 'not verified — cluster state unavailable'}
+              ? ' and a limited EPP container check.'
+              : '; cluster state is unavailable.'} No warning does not confirm a scorer is working.
             {(() => {
               const affected = Array.from(selectedProfiles).filter(
                 (name) => checks.profiles[name]?.severity !== undefined && checks.profiles[name].severity !== 'ok',
@@ -517,7 +505,7 @@ export default function NewRun() {
                   {' '}
                   {affected.length} of the selected profile
                   {affected.length > 1 ? 's' : ''} ha
-                  {affected.length > 1 ? 've' : 's'} caveats for this endpoint.
+                  {affected.length > 1 ? 've' : 's'} warnings for this endpoint.
                 </span>
               ) : null
             })()}

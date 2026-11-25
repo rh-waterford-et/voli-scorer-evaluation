@@ -241,19 +241,21 @@ export interface ProfileListResponse {
 
 // -- scorer caveats / operability --------------------------------------------------
 
-export type CheckSeverity = 'ok' | 'warn' | 'bad' | 'unknown'
+export type CheckSeverity = 'ok' | 'warning'
 
 export interface ProfileCheck {
   severity: CheckSeverity
   status: string
   statuses: string[]
   reasons: string[]
+  details: string[]
   scorer_types: string[]
 }
 
 export interface ScorerCheck {
   severity: CheckSeverity
   reasons: string[]
+  details: string[]
 }
 
 export interface ProfilesCheckResponse {

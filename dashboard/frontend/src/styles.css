@@ -515,10 +515,10 @@ button.link {
 }
 
 .hint-popup {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 50%;
-  transform: translateX(-50%);
+  position: fixed;
+  top: 0;
+  left: 0;
+  visibility: hidden;
   background: #2b3138;
   color: #eef1f4;
   padding: 8px 10px;
@@ -639,3 +639,11 @@ button.link {
   max-width: 380px;
   margin-top: 1px;
 }
+
+/* Scorer warnings use the same accessible popover as field help. */
+.warning-button { cursor: pointer; font: inherit; }
+.warning-summary { white-space: pre-line; display: block; }
+.warning-details { margin-top: 0.6em; white-space: normal; display: block; }
+.warning-details button { cursor: pointer; }
+.warning-detail { display: block; margin: 0.5em 0; }
+.hint-popup { max-height: min(55vh, calc(100vh - 16px)); overflow-y: auto; }

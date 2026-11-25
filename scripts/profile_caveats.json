@@ -1,6 +1,6 @@
 {
   "verified_as_of": "2026-11-23",
-  "note": "Source review on 2026-11-23: llm-d-router v1.0.0 (latest published release checked) and main at 8f372a856464be9cf6fb009b6b433d43af531ddb; related vLLM-Omni main at 964e65d5d4ddb68e1fcfd6143d8cf29be6e683af and latency-predictor main at 51e801acb515d2cd49342ce63da04ffd5cea0f7c. The dashboard does not detect deployed versions or validate parser/producer output, metric mappings, backend cache hits, predictor health or training. ok means no applicable caveat was found, not verified operability. Caveats use the current configuration and cluster view, not a historical run snapshot. Unknown and limited caveats warn but do not suppress Compare winner highlighting; the worst applicable caveat is inherited by a mixed profile, although its other scorers may still contribute useful signals.",
+  "note": "Source review on 2026-11-23: llm-d-router v1.0.0 and main at 8f372a856464be9cf6fb009b6b433d43af531ddb; related vLLM-Omni and latency-predictor main. Warnings prompt checks; they do not block comparisons. The dashboard does not verify router versions, signals, backend cache hits or predictor health. Checks use current configuration, not a historical run snapshot.",
   "scorers": {
     "latency-scorer": {
       "requirements": [
@@ -16,8 +16,8 @@
               "match": "llm-d-latency-predictor-prediction-server"
             }
           ],
-          "missing_status": "unknown",
-          "missing_reason": "Predictor sidecars not found in the EPP pod; training and prediction servers can instead run as services. Verify their configured URLs, readiness, training samples and predictions."
+          "missing_status": "warning",
+          "missing_reason": "Check that the predictor services are running and producing predictions."
         }
       ],
       "caveats": [
@@ -26,36 +26,41 @@
             "/v1/chat/completions",
             "/v1/embeddings"
           ],
-          "status": "unknown",
-          "reason": "Verify reachable predictor training and prediction servers, workload-appropriate samples and predictions, and streamingMode. Container presence alone does not prove predictor health. For embeddings, estimate-backed token production handles text; the checked vLLM render backend does not handle this request body."
+          "status": "warning",
+          "reason": "Check that the predictor is running, trained and producing predictions for this workload.",
+          "details": "Verify reachable predictor training and prediction servers, workload-appropriate samples and predictions, and streamingMode. Container presence alone does not prove predictor health. For embeddings, estimate-backed token production handles text; the checked vLLM render backend does not handle this request body."
         },
         {
           "endpoints": [
             "/v1/audio/speech"
           ],
-          "status": "unknown",
-          "reason": "v0.11.0/v1.0.0 estimate backend cannot process TTS. Main with PR #3712 estimates text input; the vLLM render backend does not. Verify deployed code, predictor samples, predictions and streaming metrics for audio."
+          "status": "warning",
+          "reason": "Check that the predictor is running, trained and producing predictions for this workload.",
+          "details": "v0.11.0/v1.0.0 estimate backend cannot process TTS. Main with PR #3712 estimates text input; the vLLM render backend does not. Verify deployed code, predictor samples, predictions and streaming metrics for audio."
         },
         {
           "endpoints": [
             "/v1/images/generations"
           ],
-          "status": "unknown",
-          "reason": "Image prompt estimation requires a build with PR #3721 and the estimate backend; output size and inference steps are not estimated. Verify predictor samples and predictions for this non-streaming workload."
+          "status": "warning",
+          "reason": "Check that the predictor is running, trained and producing predictions for this workload.",
+          "details": "Image prompt estimation requires a build with PR #3721 and the estimate backend; output size and inference steps are not estimated. Verify predictor samples and predictions for this non-streaming workload."
         },
         {
           "endpoints": [
             "/v1/images/edits"
           ],
-          "status": "unknown",
-          "reason": "PR #3721 adds prompt estimation; PR #4054 adds uploaded-image input estimation on main. Output-generation cost remains outside that estimate. Verify deployed build, producer and predictor samples for edits."
+          "status": "warning",
+          "reason": "Check that the predictor is running, trained and producing predictions for this workload.",
+          "details": "PR #3721 adds prompt estimation; PR #4054 adds uploaded-image input estimation on main. Output-generation cost remains outside that estimate. Verify deployed build, producer and predictor samples for edits."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "v1.0.0 falls through to passthrough. Main with PR #3964 (merged November 16) parses multipart audio and estimates duration-based input via the estimate backend; the vLLM render backend does not handle this body. Verify deployed parser, producer, predictor samples and whether streaming observations represent transcript latency."
+          "status": "warning",
+          "reason": "Check that the predictor is running, trained and producing predictions for this workload.",
+          "details": "v1.0.0 falls through to passthrough. Main with PR #3964 (merged November 16) parses multipart audio and estimates duration-based input via the estimate backend; the vLLM render backend does not handle this body. Verify deployed parser, producer, predictor samples and whether streaming observations represent transcript latency."
         },
         {
           "endpoints": [
@@ -66,8 +71,9 @@
             "/v1/images/edits",
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "Verify per-endpoint metrics and prediction coverage. Checked main skips predictions for never-scraped endpoints; with partial coverage, endpoints lacking predictions are ranked behind predicted candidates. With no predictions the scorer uses a KV/queue/prefix composite fallback. Encoder-cache predictor features are opt-in (useEncoderCacheFeatures=false by default); first-body and subsequent stream observations need not be first useful audio/text or engine-token timings."
+          "status": "warning",
+          "reason": "Check that the predictor is running, trained and producing predictions for this workload.",
+          "details": "Verify per-endpoint metrics and prediction coverage. Checked main skips predictions for never-scraped endpoints; with partial coverage, endpoints lacking predictions are ranked behind predicted candidates. With no predictions the scorer uses a KV/queue/prefix composite fallback. Encoder-cache predictor features are opt-in (useEncoderCacheFeatures=false by default); first-body and subsequent stream observations need not be first useful audio/text or engine-token timings."
         }
       ]
     },
@@ -77,36 +83,41 @@
           "endpoints": [
             "/v1/embeddings"
           ],
-          "status": "unknown",
-          "reason": "Text embeddings use the estimate backend on checked main, but its pseudo-tokens do not establish actual backend KV-cache reuse; the vLLM render backend does not handle this body. Verify deployed producer, backend cache behavior and scores."
+          "status": "warning",
+          "reason": "Check the request token producer and whether the backend actually reuses this cache.",
+          "details": "Text embeddings use the estimate backend on checked main, but its pseudo-tokens do not establish actual backend KV-cache reuse; the vLLM render backend does not handle this body. Verify deployed producer, backend cache behavior and scores."
         },
         {
           "endpoints": [
             "/v1/audio/speech"
           ],
-          "status": "unknown",
-          "reason": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; PR #4059 salts the fingerprint with full input and conditioning, so a shared text prefix or changed voice need not match. Randomized conditioning can isolate identical requests. Verify deployed producer and backend reuse; pseudo-tokens do not enable precise KV-event matching."
+          "status": "warning",
+          "reason": "Check the request token producer and whether the backend actually reuses this cache.",
+          "details": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; PR #4059 salts the fingerprint with full input and conditioning, so a shared text prefix or changed voice need not match. Randomized conditioning can isolate identical requests. Verify deployed producer and backend reuse; pseudo-tokens do not enable precise KV-event matching."
         },
         {
           "endpoints": [
             "/v1/images/generations"
           ],
-          "status": "unknown",
-          "reason": "Image prompt estimation requires PR #3721 and the estimate backend. Approximate prefix matches do not establish actual diffusion/backend cache reuse; verify the deployed version and producer."
+          "status": "warning",
+          "reason": "Check the request token producer and whether the backend actually reuses this cache.",
+          "details": "Image prompt estimation requires PR #3721 and the estimate backend. Approximate prefix matches do not establish actual diffusion/backend cache reuse; verify the deployed version and producer."
         },
         {
           "endpoints": [
             "/v1/images/edits"
           ],
-          "status": "unknown",
-          "reason": "PR #3721 estimates edit prompts; PR #4054 adds uploaded-image features on main. Verify the deployed build, producer and actual backend cache behavior; estimated matches are not precise KV-event matches."
+          "status": "warning",
+          "reason": "Check the request token producer and whether the backend actually reuses this cache.",
+          "details": "PR #3721 estimates edit prompts; PR #4054 adds uploaded-image features on main. Verify the deployed build, producer and actual backend cache behavior; estimated matches are not precise KV-event matches."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "v1.0.0 supplies no transcription input via the default passthrough parser. Main with merged PR #3964 and the estimate backend supplies audio pseudo-tokens and a media hash for approximate matching. This does not establish precise KV-event matching or actual repeated-audio backend cache reuse."
+          "status": "warning",
+          "reason": "Check the request token producer and whether the backend actually reuses this cache.",
+          "details": "v1.0.0 supplies no transcription input via the default passthrough parser. Main with merged PR #3964 and the estimate backend supplies audio pseudo-tokens and a media hash for approximate matching. This does not establish precise KV-event matching or actual repeated-audio backend cache reuse."
         }
       ]
     },
@@ -116,36 +127,41 @@
           "endpoints": [
             "/v1/embeddings"
           ],
-          "status": "unknown",
-          "reason": "The estimate backend handles text embeddings, but the checked vLLM render backend does not. Verify deployed producer and endpoint length ranges; pseudo-token counts are approximate."
+          "status": "warning",
+          "reason": "Check the token estimate and endpoint length ranges for this workload.",
+          "details": "The estimate backend handles text embeddings, but the checked vLLM render backend does not. Verify deployed producer and endpoint length ranges; pseudo-token counts are approximate."
         },
         {
           "endpoints": [
             "/v1/audio/speech"
           ],
-          "status": "unknown",
-          "reason": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 estimates input text using pseudo-tokens; the render backend does not handle TTS. Verify producer and endpoint length ranges."
+          "status": "warning",
+          "reason": "Check the token estimate and endpoint length ranges for this workload.",
+          "details": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 estimates input text using pseudo-tokens; the render backend does not handle TTS. Verify producer and endpoint length ranges."
         },
         {
           "endpoints": [
             "/v1/images/generations"
           ],
-          "status": "unknown",
-          "reason": "Prompt estimation requires PR #3721 and the estimate backend. Input length is approximate and does not measure output image size or generation steps."
+          "status": "warning",
+          "reason": "Check the token estimate and endpoint length ranges for this workload.",
+          "details": "Prompt estimation requires PR #3721 and the estimate backend. Input length is approximate and does not measure output image size or generation steps."
         },
         {
           "endpoints": [
             "/v1/images/edits"
           ],
-          "status": "unknown",
-          "reason": "PR #3721 estimates edit text; PR #4054 adds uploaded-image input estimation on main. Neither establishes output-generation cost or exact model context length; verify deployed version and ranges."
+          "status": "warning",
+          "reason": "Check the token estimate and endpoint length ranges for this workload.",
+          "details": "PR #3721 estimates edit text; PR #4054 adds uploaded-image input estimation on main. Neither establishes output-generation cost or exact model context length; verify deployed version and ranges."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "Main with merged PR #3964 and the estimate backend estimates uploaded audio length; v1.0.0 falls through to passthrough and the checked vLLM render backend does not handle this body. A duration header overrides payload duration; PCM WAV headers can supply duration, while other formats use byte-rate estimates. Verify token rates, caps and endpoint ranges; pseudo-tokens are not exact engine context length."
+          "status": "warning",
+          "reason": "Check the token estimate and endpoint length ranges for this workload.",
+          "details": "Main with merged PR #3964 and the estimate backend estimates uploaded audio length; v1.0.0 falls through to passthrough and the checked vLLM render backend does not handle this body. A duration header overrides payload duration; PCM WAV headers can supply duration, while other formats use byte-rate estimates. Verify token rates, caps and endpoint ranges; pseudo-tokens are not exact engine context length."
         }
       ]
     },
@@ -155,36 +171,41 @@
           "endpoints": [
             "/v1/embeddings"
           ],
-          "status": "unknown",
-          "reason": "Estimate-backed text embedding input is supported on checked main; the vLLM render backend does not handle this body. Verify the deployed producer and overlapping-request scores."
+          "status": "warning",
+          "reason": "Input is estimated. Check whether the deployed router and producer support this workload.",
+          "details": "Estimate-backed text embedding input is supported on checked main; the vLLM render backend does not handle this body. Verify the deployed producer and overlapping-request scores."
         },
         {
           "endpoints": [
             "/v1/audio/speech"
           ],
-          "status": "unknown",
-          "reason": "TTS input estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 and the estimate backend estimates input text; the vLLM render backend does not handle TTS. Main with PR #4382 also estimates output codec frames from spoken-input byte length when addEstimatedOutputTokens is enabled (default false). This heuristic is capped and does not measure actual audio duration or GPU cost; verify deployed settings and scores."
+          "status": "warning",
+          "reason": "Input is estimated. Check whether the deployed router and producer support this workload.",
+          "details": "TTS input estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 and the estimate backend estimates input text; the vLLM render backend does not handle TTS. Main with PR #4382 also estimates output codec frames from spoken-input byte length when addEstimatedOutputTokens is enabled (default false). This heuristic is capped and does not measure actual audio duration or GPU cost; verify deployed settings and scores."
         },
         {
           "endpoints": [
             "/v1/images/generations"
           ],
-          "status": "unknown",
-          "reason": "Prompt estimation requires PR #3721 and the estimate backend; it does not measure image output size or inference steps. Verify deployed version and input estimates."
+          "status": "warning",
+          "reason": "Input is estimated. Check whether the deployed router and producer support this workload.",
+          "details": "Prompt estimation requires PR #3721 and the estimate backend; it does not measure image output size or inference steps. Verify deployed version and input estimates."
         },
         {
           "endpoints": [
             "/v1/images/edits"
           ],
-          "status": "unknown",
-          "reason": "PR #3721 estimates edit text; PR #4054 adds uploaded-image input estimation on main. The estimate omits output-generation cost; verify deployed version and producer."
+          "status": "warning",
+          "reason": "Input is estimated. Check whether the deployed router and producer support this workload.",
+          "details": "PR #3721 estimates edit text; PR #4054 adds uploaded-image input estimation on main. The estimate omits output-generation cost; verify deployed version and producer."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "Main with merged PR #3964 and the estimate backend supplies duration-based audio input; v1.0.0 falls through to passthrough. A duration header overrides payload duration; PCM WAV headers can supply duration, while other formats use byte-rate estimates. Verify deployed parser, producer, token rates/caps and overlapping-request scores; the checked vLLM render backend does not handle this body."
+          "status": "warning",
+          "reason": "Input is estimated. Check whether the deployed router and producer support this workload.",
+          "details": "Main with merged PR #3964 and the estimate backend supplies duration-based audio input; v1.0.0 falls through to passthrough. A duration header overrides payload duration; PCM WAV headers can supply duration, while other formats use byte-rate estimates. Verify deployed parser, producer, token rates/caps and overlapping-request scores; the checked vLLM render backend does not handle this body."
         },
         {
           "endpoints": [
@@ -195,8 +216,9 @@
             "/v1/images/edits",
             "/v1/audio/transcriptions"
           ],
-          "status": "limited",
-          "reason": "Verify inflight-load-producer accounting, not only tokenization. With addEstimatedOutputTokens=false (default), input load is released at the first response-body signal, or earlier on a compatible configured KV event, so ongoing generation may no longer contribute token load. Prefix-match data can discount input even without a prefix scorer in the selected profile. Output estimates are optional heuristics; non-text cost weighting in PR #2967 remains unmerged at the review commit."
+          "status": "warning",
+          "reason": "Input load may stop being counted after the first response. Check the output-estimation setting.",
+          "details": "Verify inflight-load-producer accounting, not only tokenization. With addEstimatedOutputTokens=false (default), input load is released at the first response-body signal, or earlier on a compatible configured KV event, so ongoing generation may no longer contribute token load. Prefix-match data can discount input even without a prefix scorer in the selected profile. Output estimates are optional heuristics; non-text cost weighting in PR #2967 remains unmerged at the review commit."
         }
       ]
     },
@@ -206,36 +228,41 @@
           "endpoints": [
             "/v1/embeddings"
           ],
-          "status": "unknown",
-          "reason": "The estimate backend handles text embeddings, but the checked vLLM render backend does not handle this request body. Verify the deployed token and prefix producers; without match data requests are treated as cold."
+          "status": "warning",
+          "reason": "Check prefix-match data; without it, requests are treated as cold.",
+          "details": "The estimate backend handles text embeddings, but the checked vLLM render backend does not handle this request body. Verify the deployed token and prefix producers; without match data requests are treated as cold."
         },
         {
           "endpoints": [
             "/v1/audio/speech"
           ],
-          "status": "unknown",
-          "reason": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; PR #4059 salts the fingerprint with full input and conditioning, so a shared text prefix or changed voice need not match. Randomized conditioning can isolate identical requests. Verify deployed producer and backend reuse; pseudo-tokens do not enable precise KV-event matching. Without match data all requests are treated as cold, testing LRU spreading."
+          "status": "warning",
+          "reason": "Check prefix-match data; without it, requests are treated as cold.",
+          "details": "TTS estimates are absent in v0.11.0/v1.0.0. Main with PR #3712 supports estimate-backed approximate matching; PR #4059 salts the fingerprint with full input and conditioning, so a shared text prefix or changed voice need not match. Randomized conditioning can isolate identical requests. Verify deployed producer and backend reuse; pseudo-tokens do not enable precise KV-event matching. Without match data all requests are treated as cold, testing LRU spreading."
         },
         {
           "endpoints": [
             "/v1/images/generations"
           ],
-          "status": "unknown",
-          "reason": "Without meaningful prefix-match data, requests are treated as cold and only LRU spreading is tested. Image prompt estimates require PR #3721; backend cache reuse remains unverified."
+          "status": "warning",
+          "reason": "Check prefix-match data; without it, requests are treated as cold.",
+          "details": "Without meaningful prefix-match data, requests are treated as cold and only LRU spreading is tested. Image prompt estimates require PR #3721; backend cache reuse remains unverified."
         },
         {
           "endpoints": [
             "/v1/images/edits"
           ],
-          "status": "unknown",
-          "reason": "Without meaningful prefix-match data, requests are treated as cold. PR #4054 adds uploaded-image estimates on main; verify the deployed producer and backend cache behavior."
+          "status": "warning",
+          "reason": "Check prefix-match data; without it, requests are treated as cold.",
+          "details": "Without meaningful prefix-match data, requests are treated as cold. PR #4054 adds uploaded-image estimates on main; verify the deployed producer and backend cache behavior."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "Main with merged PR #3964 and the estimate backend can supply audio-derived approximate prefix data; v1.0.0 defaults to passthrough. Without match data requests are treated as cold, testing LRU spreading. Validate presumed warm and cold cases; an estimated hit does not prove backend audio-cache reuse."
+          "status": "warning",
+          "reason": "Check prefix-match data; without it, requests are treated as cold.",
+          "details": "Main with merged PR #3964 and the estimate backend can supply audio-derived approximate prefix data; v1.0.0 defaults to passthrough. Without match data requests are treated as cold, testing LRU spreading. Validate presumed warm and cold cases; an estimated hit does not prove backend audio-cache reuse."
         }
       ]
     },
@@ -248,22 +275,25 @@
             "/v1/images/generations",
             "/v1/embeddings"
           ],
-          "status": "not-useful",
-          "reason": "This tool sends text input for this endpoint, with no input media for multimodal encoder-cache reuse."
+          "status": "warning",
+          "reason": "This workload has no input media, so this scorer will not influence routing.",
+          "details": "This tool sends text input for this endpoint, with no input media for multimodal encoder-cache reuse."
         },
         {
           "endpoints": [
             "/v1/images/edits"
           ],
-          "status": "unknown",
-          "reason": "Main with PR #4054 and the estimate backend can supply an uploaded-image feature. For this route the cache producer needs token-produced media metadata. Verify deployed producers, modeled cache capacity and whether the image backend actually reuses encoder outputs; a predicted match is not an engine hit."
+          "status": "warning",
+          "reason": "Check media features and whether the backend actually reuses its encoder cache.",
+          "details": "Main with PR #4054 and the estimate backend can supply an uploaded-image feature. For this route the cache producer needs token-produced media metadata. Verify deployed producers, modeled cache capacity and whether the image backend actually reuses encoder outputs; a predicted match is not an engine hit."
         },
         {
           "endpoints": [
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "Main with merged PR #3964 and the estimate backend can supply an uploaded-audio feature; v1.0.0 defaults to passthrough. For this route the cache producer needs token-produced media metadata. Verify deployed producers, modeled cache capacity and actual backend encoder-cache reuse; a predicted match is not an engine hit."
+          "status": "warning",
+          "reason": "Check media features and whether the backend actually reuses its encoder cache.",
+          "details": "Main with merged PR #3964 and the estimate backend can supply an uploaded-audio feature; v1.0.0 defaults to passthrough. For this route the cache producer needs token-produced media metadata. Verify deployed producers, modeled cache capacity and actual backend encoder-cache reuse; a predicted match is not an engine hit."
         }
       ]
     },
@@ -278,8 +308,9 @@
             "/v1/images/edits",
             "/v1/audio/transcriptions"
           ],
-          "status": "unknown",
-          "reason": "Verify a meaningful per-endpoint KV metric and its stage labels. Checked main adds a built-in vllm-omni engine mapping for pipeline waiting/running counts but deliberately leaves KV usage unmapped; a successful scrape can then leave KV usage at zero and yield tied high scores. A custom AR-stage mapping may supply KV data, but it does not measure the whole multimodal pipeline or total GPU load. The dashboard does not inspect the mapping."
+          "status": "warning",
+          "reason": "Check that EPP receives a useful KV-cache metric for the relevant stage.",
+          "details": "Verify a meaningful per-endpoint KV metric and its stage labels. Checked main adds a built-in vllm-omni engine mapping for pipeline waiting/running counts but deliberately leaves KV usage unmapped; a successful scrape can then leave KV usage at zero and yield tied high scores. A custom AR-stage mapping may supply KV data, but it does not measure the whole multimodal pipeline or total GPU load. The dashboard does not inspect the mapping."
         }
       ]
     }
