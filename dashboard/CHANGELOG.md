@@ -10,6 +10,9 @@ when reporting issues, include it.
 
 ## Unreleased
 
+- Show scorer warnings immediately from displayed profiles while cluster checks run; ignore stale responses after changes.
+- Revalidate the built frontend page on reload so clients can pick up updated dashboard assets.
+
 - Keep scorer warnings visible outside the scrolling profile list, including expanded details.
 
 - Simplify scorer caveats to one Warning badge with short explanations and expandable details; warnings no longer suppress Compare winner highlighting.

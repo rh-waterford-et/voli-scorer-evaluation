@@ -5,6 +5,7 @@ import { EppScoreView, Histogram, MetricBarChart } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
 import { api, openRunEvents } from '../api'
 import ScorerWarning from '../components/ScorerWarning'
+import { startWarningChecks } from '../warningChecks'
 import type { ProfileCheck, RequestResult, RunDetail, ScriptRun } from '../types'
 import {
   METRIC_LABELS,
@@ -259,6 +260,7 @@ export default function RunView() {
   const [histoMetric, setHistoMetric] = useState('e2e_ms')
   const [histoRunId, setHistoRunId] = useState('')
   const [caveatNotes, setCaveatNotes] = useState<{ profile: string; check: ProfileCheck }[]>([])
+  const [scorerWarningError, setScorerWarningError] = useState(false)
   const logRef = useRef<HTMLPreElement | null>(null)
   const sourceRef = useRef<EventSource | null>(null)
 
@@ -293,15 +295,17 @@ export default function RunView() {
         : detail.results.endpoint?.includes('/v1/audio/speech')
         ? '/v1/audio/speech'
         : '/v1/chat/completions')
-    let cancelled = false
-    api
-      .profileCheck(endpoint, {
+    setCaveatNotes([])
+    setScorerWarningError(false)
+    return startWarningChecks({
+      local: () => api.builtinProfiles().then((result) => api.localProfileCheck(endpoint, result.profiles)),
+      live: () => api.profileCheck(endpoint, {
         namespace: params?.namespace ?? 'vllm-omni-validation',
         epp_deployment: params?.epp_deployment ?? 'endpoint-picker-epp',
         epp_container: params?.epp_container ?? 'epp',
-      })
-      .then((check) => {
-        if (cancelled) return
+      }),
+      onResult: (check) => {
+        setScorerWarningError(false)
         const seen = new Set<string>()
         const notes: { profile: string; check: ProfileCheck }[] = []
         for (const run of detail.results?.runs ?? []) {
@@ -311,11 +315,11 @@ export default function RunView() {
           if (entry && entry.severity !== 'ok') notes.push({ profile: run.profile, check: entry })
         }
         setCaveatNotes(notes)
-      })
-      .catch(() => setCaveatNotes([]))
-    return () => {
-      cancelled = true
-    }
+      },
+      onLocalError: () => setScorerWarningError(true),
+      onLocalDone: () => {},
+      onLiveStatus: () => {},
+    })
   }, [detail])
 
   const status = detail?.status
@@ -569,6 +573,7 @@ export default function RunView() {
         <div className="panel muted">This run has no captured log (it may have failed before starting).</div>
       )}
 
+      {scorerWarningError && <div className="panel warn-text">Scorer warnings could not be loaded.</div>}
       {caveatNotes.length > 0 && (
         <div className="warn-text panel">
           <strong>Scorer warnings for this run:</strong>
@@ -580,7 +585,7 @@ export default function RunView() {
             ))}
           </ul>
           Measurements are still valid as client-observed behavior, but routing decisions for
-          these profiles may not reflect the scorers' intended signals.
+          these profiles may not reflect the scorers' intended signals. Warnings use the current profile configuration.
         </div>
       )}
 

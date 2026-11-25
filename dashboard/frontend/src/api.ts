@@ -91,6 +91,12 @@ export const api = {
 
   builtinProfiles: () => getJSON<ProfileListResponse>('/api/profiles'),
 
+  localProfileCheck: (endpoint: string, profiles: ProfileInfo[]) =>
+    postJSON<ProfilesCheckResponse>('/api/profiles/check-local', {
+      endpoint,
+      profiles: Object.fromEntries(profiles.map((profile) => [profile.name, profile.scorers.map((scorer) => scorer.type)])),
+    }),
+
   refreshProfiles: (query: { namespace: string; epp_deployment: string; epp_container: string }) =>
     postJSON<ProfileRefresh>('/api/profiles/refresh', query),
 

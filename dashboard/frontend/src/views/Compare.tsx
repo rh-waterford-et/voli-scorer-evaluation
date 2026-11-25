@@ -14,6 +14,7 @@ import {
 import { MetricBarChart, chartColors } from '../components/Charts'
 import HelpHint from '../components/HelpHint'
 import ScorerWarning from '../components/ScorerWarning'
+import { startWarningChecks } from '../warningChecks'
 import { api } from '../api'
 import { useTheme } from '../theme'
 import type { ProfilesCheckResponse, RunDetail, ScriptRun } from '../types'
@@ -60,6 +61,7 @@ export default function Compare() {
   const [stat, setStat] = useState<Stat>('p50')
   const [load, setLoad] = useState('')
   const [scorerCheck, setScorerCheck] = useState<ProfilesCheckResponse | null>(null)
+  const [scorerWarningError, setScorerWarningError] = useState(false)
 
   useEffect(() => {
     if (!runIds.length) return
@@ -100,14 +102,20 @@ export default function Compare() {
         : first.results?.endpoint?.includes('/v1/audio/speech')
         ? '/v1/audio/speech'
         : '/v1/chat/completions')
-    api
-      .profileCheck(endpoint, {
+    setScorerCheck(null)
+    setScorerWarningError(false)
+    return startWarningChecks({
+      local: () => api.builtinProfiles().then((result) => api.localProfileCheck(endpoint, result.profiles)),
+      live: () => api.profileCheck(endpoint, {
         namespace: first.params?.namespace ?? 'vllm-omni-validation',
         epp_deployment: first.params?.epp_deployment ?? 'endpoint-picker-epp',
         epp_container: first.params?.epp_container ?? 'epp',
-      })
-      .then(setScorerCheck)
-      .catch(() => setScorerCheck(null))
+      }),
+      onResult: (result) => { setScorerCheck(result); setScorerWarningError(false) },
+      onLocalError: () => setScorerWarningError(true),
+      onLocalDone: () => {},
+      onLiveStatus: () => {},
+    })
   }, [details])
 
   const isItemSelected = (runId: string, profile: string) =>
@@ -463,10 +471,11 @@ export default function Compare() {
         </div>
       )}
 
+      {scorerWarningError && <div className="panel warn-text">Scorer warnings could not be loaded.</div>}
       {caveatedProfiles.size > 0 && (
         <div className="panel warn-text">
           <strong>Scorer warnings</strong> — check these signals before interpreting results.
-          A faster profile does not prove every scorer influenced routing.
+          A faster profile does not prove every scorer influenced routing. Warnings use the current profile configuration.
           <ul style={{ margin: '6px 0 0', paddingLeft: 20 }}>
             {Array.from(caveatedProfiles.entries()).map(([profile, check]) => (
               <li key={profile} className="muted">

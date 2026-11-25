@@ -260,7 +260,7 @@ export interface ScorerCheck {
 
 export interface ProfilesCheckResponse {
   verified_as_of: string | null
-  cluster_access: 'ok' | 'unavailable'
+  cluster_access: 'ok' | 'unavailable' | 'not_checked'
   cluster_error: string | null
   endpoint: string
   profiles: Record<string, ProfileCheck>

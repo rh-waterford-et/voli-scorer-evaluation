@@ -99,7 +99,7 @@ def evaluate_scorer(entry: dict, endpoint: str, deployment: Optional[dict]) -> d
                 for component in components
             )
             statuses.append("warning")
-            reasons.append("Cluster unavailable; check predictor services and training.")
+            reasons.append("Predictor services have not been checked; verify readiness and training.")
             details.append(f"Prerequisites not verified: {names}")
             continue
         missing = [

@@ -45,6 +45,12 @@ workload mismatches and invalid results retain their existing safeguards.
 Checks use current configuration, not a historical run snapshot. The source
 review date remains `verified_as_of` in the JSON.
 
+New Run checks the displayed profiles against the local caveats immediately,
+even with no cluster settings. When cluster details are available, a separate
+live check refines the warnings; a slow or unavailable cluster does not delay
+the local warnings. Refreshing profiles rechecks the displayed list. Results
+and Compare also show local warnings while their live check is pending.
+
 ## Safety / access model
 
 - The backend binds to localhost and has no authentication — run it on your
@@ -212,6 +218,7 @@ subprocess is not tracked); avoid restarting the backend mid-run.
 |---|---|
 | `GET /api/profiles` | Script profile map (local synced file if present, else tracked default). |
 | `GET /api/profiles/check?endpoint=…` | Per-profile scorer operability: curated caveats + live prerequisite checks (read-only). |
+| `POST /api/profiles/check-local` | Check the supplied profile scorer types against curated caveats without a cluster lookup. |
 | `GET /api/profiles/cluster?namespace=…` | Live EPP profiles from the ConfigMap (read-only). |
 | `POST /api/profiles/refresh` | Load live profiles and update the local script map from one snapshot. |
 | `POST /api/runs` | Start a run with JSON `{name?, params}`. Image edits and transcriptions use multipart form data with that JSON in `params` and the upload in `file`. |

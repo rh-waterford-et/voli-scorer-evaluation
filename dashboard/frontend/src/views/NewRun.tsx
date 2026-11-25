@@ -1,5 +1,6 @@
 import ScorerWarning from '../components/ScorerWarning'
-import { useEffect, useMemo, useState } from 'react'
+import { startWarningChecks } from '../warningChecks'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import HelpHint from '../components/HelpHint'
@@ -73,6 +74,7 @@ export default function NewRun() {
   const [eppContainer, setEppContainer] = useState(draft.eppContainer ?? '')
 
   const [profileInfos, setProfileInfos] = useState<ProfileInfo[]>([])
+  const hasClusterProfiles = useRef(false)
   const [mapInfo, setMapInfo] = useState<{
     map_source: 'local' | 'default'
     map_synced_at: string | null
@@ -80,6 +82,9 @@ export default function NewRun() {
     map_profiles: number | null
   } | null>(null)
   const [checks, setChecks] = useState<ProfilesCheckResponse | null>(null)
+  const [checkingWarnings, setCheckingWarnings] = useState(false)
+  const [warningError, setWarningError] = useState<string | null>(null)
+  const [liveCheck, setLiveCheck] = useState<'not_checked' | 'checking' | 'ok' | 'unavailable'>('not_checked')
   const [profileError, setProfileError] = useState<string | null>(null)
   const [clusterInfo, setClusterInfo] = useState<ClusterProfiles | null>(null)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
@@ -132,10 +137,11 @@ export default function NewRun() {
     api
       .builtinProfiles()
       .then((result) => {
+        if (hasClusterProfiles.current) return
         setProfileInfos(result.profiles)
         setMapInfo(result)
       })
-      .catch((cause) => setProfileError(String(cause)))
+      .catch((cause) => { if (!hasClusterProfiles.current) setProfileError(String(cause)) })
   }, [])
 
   // Deep link from the Builder: /new?profile=<name> preselects that profile.
@@ -144,27 +150,33 @@ export default function NewRun() {
     if (preset) setSelectedProfiles(new Set([preset]))
   }, [searchParams])
 
-  // Scorer operability for the chosen endpoint (curated caveats + live
-  // prerequisite checks). Debounced: endpoint/namespace changes are cheap,
-  // but the check reads the cluster when oc is available. Skipped while the
-  // cluster-lookup fields are still empty (fresh browser, placeholders only).
+  // Show curated warnings for the displayed profiles immediately; refine
+  // them with a live check when cluster details are available.
   useEffect(() => {
-    if (!namespace.trim() || !eppDeployment.trim() || !eppContainer.trim()) {
-      setChecks(null)
+    setChecks(null)
+    setWarningError(null)
+    setLiveCheck('not_checked')
+    if (!profileInfos.length) {
+      setCheckingWarnings(false)
       return
     }
-    const timer = setTimeout(() => {
-      api
-        .profileCheck(endpoint, {
+    setCheckingWarnings(true)
+    const canCheckLive = !!(namespace.trim() && eppDeployment.trim() && eppContainer.trim())
+    return startWarningChecks({
+      local: () => api.localProfileCheck(endpoint, profileInfos),
+      live: canCheckLive
+        ? () => api.profileCheck(endpoint, {
           namespace,
           epp_deployment: eppDeployment,
           epp_container: eppContainer,
         })
-        .then(setChecks)
-        .catch(() => setChecks(null))
-    }, 400)
-    return () => clearTimeout(timer)
-  }, [endpoint, namespace, eppDeployment, eppContainer])
+        : undefined,
+      onResult: (result) => { setChecks(result); setWarningError(null) },
+      onLocalError: () => setWarningError('Could not load scorer warnings. Retry by reloading the dashboard.'),
+      onLocalDone: () => setCheckingWarnings(false),
+      onLiveStatus: setLiveCheck,
+    })
+  }, [endpoint, namespace, eppDeployment, eppContainer, profileInfos])
 
   // Persist the durable form state so switching views (or reloading) keeps
   // the setup. The run name, uploaded files and API key stay ephemeral.
@@ -217,6 +229,7 @@ export default function NewRun() {
         epp_deployment: eppDeployment,
         epp_container: eppContainer,
       })
+      hasClusterProfiles.current = true
       setClusterInfo(result.profiles)
       setProfileInfos(result.profiles.profiles)
       if (result.sync.ok) {
@@ -490,12 +503,15 @@ export default function NewRun() {
           </p>
         )}
         {profileError && <div className="error-text">{profileError}</div>}
+        {checkingWarnings && !checks && <p className="muted">Loading scorer warnings…</p>}
+        {warningError && <p className="warn-text">{warningError}</p>}
         {checks && (
           <p className="muted" style={{ marginTop: -6 }}>
             Scorer warnings are based on a source review ({checks.verified_as_of ?? 'date unknown'})
-            {checks.cluster_access === 'ok'
-              ? ' and a limited EPP container check.'
-              : '; cluster state is unavailable.'} No warning does not confirm a scorer is working.
+            {liveCheck === 'ok' ? ' and a limited EPP container check.'
+              : liveCheck === 'checking' ? '; checking the cluster…'
+              : liveCheck === 'unavailable' ? '; cluster check unavailable.'
+              : '; cluster not checked.'} No warning does not confirm a scorer is working.
             {(() => {
               const affected = Array.from(selectedProfiles).filter(
                 (name) => checks.profiles[name]?.severity !== undefined && checks.profiles[name].severity !== 'ok',

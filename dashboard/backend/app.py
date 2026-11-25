@@ -37,6 +37,11 @@ class CreateRunRequest(BaseModel):
     params: bench.RunParams
 
 
+class LocalProfileCheckRequest(BaseModel):
+    endpoint: str
+    profiles: dict[str, list[str]]
+
+
 # -- health --------------------------------------------------------------------
 
 
@@ -82,7 +87,7 @@ def profiles_check(
 
     Profiles are resolved from the script map and, when cluster access is
     available, the live ConfigMap (live takes precedence). Without cluster
-    access, requirements report "unknown" -- never "missing".
+    access, prerequisite checks are reported as warnings.
     """
     caveats = caveats_module.load_caveats()
 
@@ -132,6 +137,26 @@ def profiles_check(
         "endpoint": endpoint,
         "profiles": profiles,
         "scorers": scorer_entries,
+    }
+
+
+@app.post("/api/profiles/check-local")
+def profiles_check_local(request: LocalProfileCheckRequest):
+    """Immediately check the displayed profiles without querying the cluster."""
+    caveats = caveats_module.load_caveats()
+    profiles = {}
+    for name, descriptions in request.profiles.items():
+        types = []
+        for description in descriptions:
+            types.extend(caveats_module.scorer_types_from_description(description))
+        profiles[name] = caveats_module.evaluate_types(types, request.endpoint, caveats, None)
+    return {
+        "verified_as_of": caveats.get("verified_as_of"),
+        "cluster_access": "not_checked",
+        "cluster_error": None,
+        "endpoint": request.endpoint,
+        "profiles": profiles,
+        "scorers": {},
     }
 
 
@@ -467,10 +492,11 @@ FRONTEND_ROOT = FRONTEND_DIST.resolve()
 def spa(full_path: str):
     candidate = (FRONTEND_DIST / full_path).resolve() if full_path else None
     if candidate is not None and candidate.is_file() and candidate.is_relative_to(FRONTEND_ROOT):
-        return FileResponse(candidate)
+        headers = {"Cache-Control": "no-cache"} if candidate.name == "index.html" else None
+        return FileResponse(candidate, headers=headers)
     index = FRONTEND_DIST / "index.html"
     if index.is_file():
-        return FileResponse(index)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
     return JSONResponse(
         status_code=503,
         content={
