@@ -34,7 +34,14 @@ store.mark_interrupted_on_startup()
 
 class CreateRunRequest(BaseModel):
     name: Optional[str] = None
+    # Journal metadata for grouping runs in History; not a benchmark parameter
+    # and never part of the script invocation.
+    series: Optional[str] = None
     params: bench.RunParams
+
+
+class SeriesRequest(BaseModel):
+    series: Optional[str] = None
 
 
 class LocalProfileCheckRequest(BaseModel):
@@ -342,8 +349,31 @@ async def create_run(request: Request):
         params.input_info = info
     elif upload_data is not None:
         raise HTTPException(status_code=400, detail="file upload is only valid for image-edit and transcription runs")
-    run = manager.create(body.name, params, run_id=run_id)
+    run = manager.create(body.name, params, run_id=run_id, series=body.series)
     return {"id": run.run_id}
+
+
+@app.get("/api/series")
+def series_list():
+    """Distinct series labels used by stored runs (for autocomplete)."""
+    return {"series": store.list_series()}
+
+
+@app.post("/api/runs/{run_id}/series")
+def set_run_series(run_id: str, request: SeriesRequest):
+    """Assign a run to a series, or clear it (ungrouped) with null/empty."""
+    try:
+        meta = store.set_series(run_id, request.series)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    if meta is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    # Keep an in-flight run's meta in sync so its later status saves do not
+    # overwrite the new series with the stale value.
+    live = manager.get(run_id)
+    if live is not None:
+        live.meta["series"] = meta.get("series")
+    return {"id": run_id, "series": meta.get("series")}
 
 
 @app.get("/api/runs")
@@ -356,6 +386,7 @@ def list_runs(include_reports: bool = True):
             "created_at": meta.get("created_at"),
             "status": meta.get("status"),
             "source": "dashboard",
+            "series": meta.get("series"),
             "model": (meta.get("params") or {}).get("model"),
             "requested_profiles": (meta.get("params") or {}).get("profiles") or [],
         }

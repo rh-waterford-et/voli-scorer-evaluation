@@ -59,6 +59,8 @@ export default function NewRun() {
   // browser starts with empty fields and placeholders only.
   const draft = loadDraft('newrun') ?? {}
   const [name, setName] = useState('')
+  const [series, setSeries] = useState(draft.series ?? '')
+  const [seriesOptions, setSeriesOptions] = useState<string[]>([])
   type RunEndpoint =
     | '/v1/audio/speech'
     | '/v1/chat/completions'
@@ -144,6 +146,14 @@ export default function NewRun() {
       .catch((cause) => { if (!hasClusterProfiles.current) setProfileError(String(cause)) })
   }, [])
 
+  // Existing series names for the Series field's autocomplete.
+  useEffect(() => {
+    api
+      .seriesList()
+      .then((result) => setSeriesOptions(result.series))
+      .catch(() => setSeriesOptions([]))
+  }, [])
+
   // Deep link from the Builder: /new?profile=<name> preselects that profile.
   useEffect(() => {
     const preset = searchParams.get('profile')
@@ -188,6 +198,7 @@ export default function NewRun() {
       namespace,
       eppDeployment,
       eppContainer,
+      series,
       selectedProfiles: Array.from(selectedProfiles),
       loads,
       promptMode,
@@ -209,7 +220,7 @@ export default function NewRun() {
       timeoutSeconds,
     })
   }, [
-    endpoint, model, url, namespace, eppDeployment, eppContainer,
+    endpoint, model, url, namespace, eppDeployment, eppContainer, series,
     selectedProfiles, loads, promptMode, prompt, promptsText, modalities,
     tokenizer, voice, audioFormat, imageSize, language, transcriptionStream,
     sessionLength, sessionHeader, eppScores, noBackendLookup, gatewayWait,
@@ -366,7 +377,7 @@ export default function NewRun() {
     setError(null)
     try {
       const result = await api.createRun(
-        { name: name || null, params: buildParams() },
+        { name: name || null, series: series.trim() || null, params: buildParams() },
         endpoint === '/v1/images/edits' ? imageFile : endpoint === '/v1/audio/transcriptions' ? audioFile : null,
       )
       navigate(`/runs/${result.id}`)
@@ -395,6 +406,19 @@ export default function NewRun() {
             </label>
             <input type="text" value={name} onChange={(e) => setName(e.target.value)}
               placeholder="e.g. tts load combos repeat 1" />
+          </div>
+          <div>
+            <label>
+              Series (optional)
+              <HelpHint text="Groups related runs into a collapsible section in History. Typing a new name creates a series; the autocomplete lists existing ones. Left empty, the run lands in Ungrouped." />
+            </label>
+            <input type="text" value={series} onChange={(e) => setSeries(e.target.value)}
+              list="series-options" placeholder="e.g. praxis gateway comparison" />
+            <datalist id="series-options">
+              {seriesOptions.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
           </div>
           <div>
             <label>

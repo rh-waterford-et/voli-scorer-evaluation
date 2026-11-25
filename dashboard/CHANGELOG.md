@@ -10,6 +10,7 @@ when reporting issues, include it.
 
 ## Unreleased
 
+- Group runs into named series: a Series field in New Run and a per-run / bulk "Move to series" action in History render as collapsible sections; ungrouped runs stay on top.
 - Show scorer warnings immediately from displayed profiles while cluster checks run; ignore stale responses after changes.
 - Revalidate the built frontend page on reload so clients can pick up updated dashboard assets.
 

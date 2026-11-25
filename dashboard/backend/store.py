@@ -95,6 +95,22 @@ def summarize_output(normalized: Optional[dict]) -> Optional[dict]:
     }
 
 
+def normalize_series(value: Optional[str]) -> Optional[str]:
+    """Trim a series label; empty or whitespace-only becomes None (ungrouped).
+
+    Internal whitespace (including line breaks) collapses to single spaces so
+    a label always renders on one line.
+    """
+    if value is None:
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned:
+        return None
+    if len(cleaned) > 80:
+        raise ValueError("series name is too long (at most 80 characters)")
+    return cleaned
+
+
 class RunStore:
     def __init__(self, runs_dir: Path = RUNS_DIR):
         self.runs_dir = Path(runs_dir)
@@ -139,7 +155,8 @@ class RunStore:
         }
         return path, info
 
-    def create(self, run_id: str, name: str, params: dict) -> dict:
+    def create(self, run_id: str, name: str, params: dict, series: Optional[str] = None) -> dict:
+        series = normalize_series(series)
         with self._lock:
             self.run_dir(run_id).mkdir(parents=True, exist_ok=True)
             meta = {
@@ -151,6 +168,8 @@ class RunStore:
                 "params": params,
                 "profiles": [],
             }
+            if series:
+                meta["series"] = series
             self._save_meta(meta)
             return meta
 
@@ -196,6 +215,29 @@ class RunStore:
                 meta["status"] = "interrupted"
                 meta["error"] = "dashboard backend restarted while this run was active"
                 self.save(meta)
+
+    def set_series(self, run_id: str, series: Optional[str]) -> Optional[dict]:
+        """Assign a run to a series; None or empty clears it (ungrouped).
+
+        Returns the updated meta, or None when the run does not exist.
+        """
+        cleaned = normalize_series(series)
+        with self._lock:
+            meta = self.load_meta(run_id)
+            if meta is None:
+                return None
+            if cleaned:
+                meta["series"] = cleaned
+            else:
+                meta["series"] = None
+            self._save_meta(meta)
+            return meta
+
+    def list_series(self) -> list[str]:
+        """Distinct series labels currently used by stored runs (sorted)."""
+        return sorted(
+            {str(meta.get("series")) for meta in self.list_metas() if meta.get("series")}
+        )
 
     def delete(self, run_id: str) -> bool:
         with self._lock:

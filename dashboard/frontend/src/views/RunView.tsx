@@ -506,6 +506,11 @@ export default function RunView() {
           ) : (
             <>Started {fmtWhen(detail.created_at)}{detail.finished_at ? ` · finished ${fmtWhen(detail.finished_at)}` : ''}</>
           )}
+          {detail.series && (
+            <>
+              {' '}· series <code>{detail.series}</code>
+            </>
+          )}
           {detail.results && (
             <>
               {' '}· model <code>{detail.results.model ?? '—'}</code>

@@ -50,6 +50,12 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
 
 export const api = {
   runs: () => getJSON<RunMeta[]>('/api/runs'),
+  seriesList: () => getJSON<{ series: string[] }>('/api/series'),
+  setSeries: (id: string, series: string | null) =>
+    postJSON<{ id: string; series: string | null }>(
+      `/api/runs/${encodeURIComponent(id)}/series`,
+      { series },
+    ),
 
   run: (id: string) => getJSON<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),
 
@@ -72,7 +78,7 @@ export const api = {
     }
   },
 
-  createRun: (body: { name?: string | null; params: unknown }, file?: File | null) => {
+  createRun: (body: { name?: string | null; series?: string | null; params: unknown }, file?: File | null) => {
     if (!file) return postJSON<{ id: string }>('/api/runs', body)
     const form = new FormData()
     form.append('params', JSON.stringify(body))

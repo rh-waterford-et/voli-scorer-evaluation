@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import SortTable, { type Column } from '../components/SortTable'
 import { api } from '../api'
+import { loadDraft, saveDraft } from '../persist'
 import type { RunDetail, RunMeta } from '../types'
 import { fmtInt, fmtWhen, isActive, loadLabel, statusClass } from '../format'
 
@@ -109,6 +110,14 @@ export default function History() {
   const [suiteDetails, setSuiteDetails] = useState<Record<string, RunDetail>>({})
   const [suiteLoading, setSuiteLoading] = useState<Set<string>>(new Set())
   const [suiteErrors, setSuiteErrors] = useState<Record<string, string>>({})
+
+  // Series grouping: named series render as collapsible sections (collapsed
+  // by default; the open set is remembered), ungrouped runs stay on top.
+  const [openSeries, setOpenSeries] = useState<Set<string>>(
+    () => new Set(loadDraft('history-series')?.open ?? []),
+  )
+  const [moving, setMoving] = useState<{ ids: string[]; label: string } | null>(null)
+  const [moveValue, setMoveValue] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -220,6 +229,60 @@ export default function History() {
     navigate(`/compare?items=${itemsParam}`)
   }
 
+  // -- series grouping ------------------------------------------------------
+
+  const seriesNames = useMemo(
+    () =>
+      Array.from(
+        new Set((items ?? []).map((item) => item.series).filter((name): name is string => !!name)),
+      ),
+    [items],
+  )
+  const ungrouped = useMemo(() => (items ?? []).filter((item) => !item.series), [items])
+  const grouped = useMemo(
+    () =>
+      seriesNames.map((name) => ({
+        name,
+        rows: (items ?? []).filter((item) => item.series === name),
+      })),
+    [seriesNames, items],
+  )
+
+  const toggleSeries = (name: string) => {
+    setOpenSeries((previous) => {
+      const next = new Set(previous)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      saveDraft('history-series', { open: Array.from(next) })
+      return next
+    })
+  }
+
+  const startMove = (row: RunMeta) => {
+    setMoving({ ids: [row.id], label: `Run ${row.name || row.id}` })
+    setMoveValue(row.series ?? '')
+  }
+
+  const startMoveSelected = () => {
+    const ids = selectedRunIds()
+    if (!ids.length) return
+    setMoving({ ids, label: `${ids.length} selected run${ids.length === 1 ? '' : 's'}` })
+    setMoveValue('')
+  }
+
+  const applySeries = async (value: string) => {
+    if (!moving) return
+    const series = value.trim() || null
+    try {
+      await Promise.all(moving.ids.map((id) => api.setSeries(id, series)))
+      setMoving(null)
+      setMoveValue('')
+      load()
+    } catch (cause) {
+      setError(String(cause))
+    }
+  }
+
   const columns: Column<RunMeta>[] = [
     {
       key: 'select',
@@ -329,17 +392,28 @@ export default function History() {
       key: 'actions',
       label: '',
       render: (row) => (
-        <button
-          className="link"
-          onClick={() => remove(row.id)}
-          title={
-            row.source === 'report'
-              ? 'Delete reports/' + row.id.slice('report:'.length) + '.json from the working tree (commit to make permanent)'
-              : 'Delete this run and its stored results'
-          }
-        >
-          delete
-        </button>
+        <span className="actions" style={{ gap: 10 }}>
+          {row.source !== 'report' && (
+            <button
+              className="link"
+              onClick={() => startMove(row)}
+              title="Assign this run to a series (groups runs into collapsible History sections)"
+            >
+              series
+            </button>
+          )}
+          <button
+            className="link"
+            onClick={() => remove(row.id)}
+            title={
+              row.source === 'report'
+                ? 'Delete reports/' + row.id.slice('report:'.length) + '.json from the working tree (commit to make permanent)'
+                : 'Delete this run and its stored results'
+            }
+          >
+            delete
+          </button>
+        </span>
       ),
     },
   ]
@@ -365,6 +439,13 @@ export default function History() {
             Compare selected ({selected.size})
           </button>
           <button
+            onClick={startMoveSelected}
+            disabled={!selected.size}
+            title="Move the whole runs touched by the current selection into a series"
+          >
+            Move to series…
+          </button>
+          <button
             className="danger"
             disabled={!selected.size}
             title="Delete the whole runs touched by the current selection, including profiles you did not select."
@@ -374,34 +455,115 @@ export default function History() {
           </button>
         </div>
       </div>
-      {error && <div className="error-text">{error}</div>}
-      <div className="panel">
-        <SortTable
-          columns={columns}
-          rows={items ?? []}
-          rowKey={(row) => row.id}
-          initialSortKey="created"
-          initialDesc
-          expandable={isSuite}
-          expand={(row) => (
-            <SuiteChildren
-              row={row}
-              detail={suiteDetails[row.id] ?? null}
-              loading={suiteLoading.has(row.id)}
-              error={suiteErrors[row.id] ?? null}
-              ensure={ensureDetail}
-              selected={selected}
-              toggleItem={toggleItem}
+      {error && <div className="error-text panel">{error}</div>}
+      {moving && (
+        <div className="panel">
+          <h2>Move to series</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {moving.label}. Type an existing or new series name (a new name creates the series);
+            Clear removes the runs from any series.
+          </p>
+          <div className="actions" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              autoFocus
+              type="text"
+              list="history-series-options"
+              value={moveValue}
+              onChange={(e) => setMoveValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') applySeries(moveValue)
+                if (e.key === 'Escape') setMoving(null)
+              }}
+              placeholder="e.g. praxis gateway comparison"
+              style={{ minWidth: 280 }}
             />
-          )}
-          emptyText={items === null ? 'Loading…' : 'No runs yet. Start one from New Run.'}
-        />
+            <datalist id="history-series-options">
+              {seriesNames.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            <button className="primary" onClick={() => applySeries(moveValue)}>
+              Move
+            </button>
+            <button onClick={() => applySeries('')}>Clear</button>
+            <button onClick={() => setMoving(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+      <div className="panel">
+        {(items === null || ungrouped.length > 0 || grouped.length === 0) && (
+          <>
+            {grouped.length > 0 && ungrouped.length > 0 && (
+              <div className="muted" style={{ marginBottom: 6 }}>
+                <strong>Ungrouped</strong>
+              </div>
+            )}
+            <SortTable
+              columns={columns}
+              rows={ungrouped}
+              rowKey={(row) => row.id}
+              initialSortKey="created"
+              initialDesc
+              expandable={isSuite}
+              expand={(row) => (
+                <SuiteChildren
+                  row={row}
+                  detail={suiteDetails[row.id] ?? null}
+                  loading={suiteLoading.has(row.id)}
+                  error={suiteErrors[row.id] ?? null}
+                  ensure={ensureDetail}
+                  selected={selected}
+                  toggleItem={toggleItem}
+                />
+              )}
+              emptyText={items === null ? 'Loading…' : 'No runs yet. Start one from New Run.'}
+            />
+          </>
+        )}
+        {grouped.map((group) => (
+          <div key={group.name} style={{ marginTop: 20 }}>
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => toggleSeries(group.name)}
+              title={openSeries.has(group.name) ? 'Collapse this series' : 'Expand this series'}
+            >
+              <span aria-hidden>{openSeries.has(group.name) ? '▾' : '▸'}</span>
+              <strong>{group.name}</strong>
+              <span className="muted">
+                {group.rows.length} run{group.rows.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            {openSeries.has(group.name) && (
+              <SortTable
+                columns={columns}
+                rows={group.rows}
+                rowKey={(row) => row.id}
+                initialSortKey="created"
+                initialDesc
+                expandable={isSuite}
+                expand={(row) => (
+                  <SuiteChildren
+                    row={row}
+                    detail={suiteDetails[row.id] ?? null}
+                    loading={suiteLoading.has(row.id)}
+                    error={suiteErrors[row.id] ?? null}
+                    ensure={ensureDetail}
+                    selected={selected}
+                    toggleItem={toggleItem}
+                  />
+                )}
+                emptyText="No runs in this series."
+              />
+            )}
+          </div>
+        ))}
       </div>
       <p className="muted">
         Selection is per scheduling profile: standalone runs select directly, and runs marked{' '}
         <span className="chip">suite</span> expand to their individual profiles (each with one or
         more scorers). Suite rows also have a select-all checkbox. Deleting always removes whole
-        runs.
+        runs. Runs can be grouped into collapsible series via the per-run <em>series</em> action,
+        the <em>Move to series…</em> bulk action, or the Series field in New Run.
       </p>
     </div>
   )

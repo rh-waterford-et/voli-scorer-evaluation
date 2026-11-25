@@ -297,7 +297,8 @@ class RunManager:
             "profiles": [{"name": a["name"], "argv": a["argv"]} for a in attempts],
         }
 
-    def create(self, name: Optional[str], params, run_id: Optional[str] = None) -> ManagedRun:
+    def create(self, name: Optional[str], params, run_id: Optional[str] = None,
+               series: Optional[str] = None) -> ManagedRun:
         run_id, attempts = self.plan(params, run_id)
         profiles = params.profile_names
         label = (name or "").strip()
@@ -310,7 +311,7 @@ class RunManager:
                 label = f"{profiles[0]} + {len(profiles) - 1} more"
             else:
                 label = profiles[0] if profiles else "run"
-        meta = self.store.create(run_id, label, params.model_dump())
+        meta = self.store.create(run_id, label, params.model_dump(), series=series)
         profiles_dir = self.store.run_dir(run_id) / "profiles"
         profiles_dir.mkdir(parents=True, exist_ok=True)
         if (params.prompts_text or "").strip():

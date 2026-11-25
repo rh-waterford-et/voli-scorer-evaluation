@@ -312,7 +312,7 @@ class DashboardCreateTests(unittest.IsolatedAsyncioTestCase):
             def plan(self, params):
                 return "test-run", []
 
-            def create(self, name, params, run_id):
+            def create(self, name, params, run_id, series=None):
                 self.params = params
                 return type("Run", (), {"run_id": run_id})()
 
